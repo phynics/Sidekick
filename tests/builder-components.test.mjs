@@ -1,8 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  applyCreatureRole,
   benchmarkFor,
+  classifyBenchmark,
   createEmptyOriginalCreature,
+  damageBenchmarkFor,
+  setStatisticBand,
+  setStatisticValue,
   validateOriginalCreature
 } from "../src/creature-builder.js";
 import { commitCustomCreature } from "../src/creature-generation.js";
@@ -68,6 +73,46 @@ test("Creature save benchmarks stay aligned with the native engine", () => {
     high: { minimum: 19, maximum: 19 },
     extreme: { minimum: 20, maximum: 20 }
   });
+});
+
+test("Creature stat bands and values synchronize in both directions", () => {
+  const benchmark = benchmarkFor(6);
+  assert.deepEqual(setStatisticBand({ band: "low", value: 9 }, "moderate", benchmark.saves), { band: "moderate", value: 14 });
+  assert.deepEqual(setStatisticValue({ band: "moderate", value: 14 }, 19, benchmark.saves), { band: "extreme", value: 19 });
+  assert.deepEqual(classifyBenchmark(16, benchmark.saves), {
+    band: "high",
+    expected: { minimum: 17, maximum: 17 },
+    offset: -1,
+    relation: "below",
+    guidance: "High · 1 below 17"
+  });
+});
+
+test("Creature roles apply benchmark bands to statistics, attacks, and damage", () => {
+  const creature = completeCreature();
+  creature.identity.level = 6;
+  creature.strikes[0].damage[0].expression = "1d4";
+  const updated = applyCreatureRole(creature, "controller");
+  assert.equal(updated.identity.roadmap, "controller");
+  assert.equal(updated.identity.encounterRole, "controller");
+  assert.deepEqual(updated.defenses.fortitude, { band: "low", value: 11 });
+  assert.deepEqual(updated.defenses.will, { band: "high", value: 17 });
+  assert.deepEqual(updated.strikes[0].attack, { band: "moderate", value: 15 });
+  assert.equal(updated.strikes[0].damage[0].expression, "2d4+7");
+  assert.deepEqual(damageBenchmarkFor(6).low, { expression: "2d4+7", average: 12 });
+});
+
+test("Creature validation returns the same benchmark guidance used by the editor", () => {
+  const creature = completeCreature();
+  creature.identity.level = 6;
+  creature.defenses.ac = { band: "moderate", value: 25 };
+  creature.strikes[0].attack = { band: "high", value: 18 };
+  creature.strikes[0].damage[0].expression = "2d8+10";
+  const result = validateOriginalCreature(creature);
+  assert.equal(result.benchmarkGuidance.statistics.ac.guidance, "High · 1 above 24");
+  assert.equal(result.benchmarkGuidance.strikes[0].attack.guidance, "High · 1 above 17");
+  assert.equal(result.benchmarkGuidance.strikes[0].damage.guidance, "High · 1 above 18");
+  assert.equal(result.benchmarkGuidance.role.recommended.attack, "moderate");
 });
 
 test("custom Creature commits reject native enum mismatches and fill decoder-required fields", () => {

@@ -3,6 +3,13 @@ import XCTest
 @testable import SidekickDMCore
 
 final class CreatureBuilderTests: XCTestCase {
+    func testBenchmarksIncludeStrikeDamageRolls() throws {
+        let benchmarks = try XCTUnwrap(CreatureBuilder.benchmarks(level: 6))
+        XCTAssertEqual(benchmarks.damage[.high], "2d8+9 (18)")
+        XCTAssertEqual(benchmarks.damage[.moderate], "2d6+8 (15)")
+        XCTAssertEqual(benchmarks.damage[.low], "2d4+7 (12)")
+    }
+
     private func completeCreature() -> OriginalCreature {
         OriginalCreature(
             id: "cre_test",

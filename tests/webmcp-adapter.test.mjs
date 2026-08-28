@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { CatalogIndex } from "../src/catalog-index.js";
+import { createEmptyOriginalCreature } from "../src/creature-builder.js";
 import { createWebMCPAdapter, toolDefinitions } from "../src/webmcp-adapter.js";
 
 const catalogFixture = {
@@ -164,6 +165,35 @@ test("projects Hazard Builder benchmarks and complexity-specific attack and dama
   assert.deepEqual(simple.data.statistics.dc, { hard: 23, extreme: 27 });
   const complex = await adapter.execute("sidekickdm_get_hazard_benchmarks", { level: 5, complexity: "complex", statistics: ["attack", "damage"] });
   assert.deepEqual(complex.data.statistics, { attack: 15, damage: "2d8+7 (16)" });
+});
+
+test("projects Creature damage rolls and role guidance for MCP clients", async () => {
+  const adapter = createWebMCPAdapter({ snapshot: snapshot() });
+  const result = await adapter.execute("sidekickdm_get_creature_benchmarks", { level: 6, statistics: ["damage"], role: "controller" });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data.statistics.damage.high, { expression: "2d8+9", average: 18 });
+  assert.deepEqual(result.data.role_guidance, {
+    role: "controller",
+    recommended_bands: { ac: "moderate", fortitude: "low", reflex: "moderate", will: "high", hp: "low", perception: "high", attack: "moderate", damage: "low", dc: "high" }
+  });
+});
+
+test("custom Creature validation gives MCP clients nearest-band feedback", async () => {
+  const creature = createEmptyOriginalCreature();
+  creature.identity = { ...creature.identity, name: "Mire Guide", level: 6, concept: "A mobile marsh hunter.", roadmap: "skirmisher", encounterRole: "skirmisher", traits: ["humanoid"] };
+  creature.languages = ["Common"];
+  creature.speeds = { land: 25 };
+  creature.perception = { band: "high", value: 18 };
+  creature.defenses = { ...creature.defenses, ac: { band: "moderate", value: 25 }, fortitude: { band: "moderate", value: 14 }, reflex: { band: "high", value: 17 }, will: { band: "moderate", value: 14 }, hp: { band: "moderate", value: 95 } };
+  creature.strikes = [{ id: "strike_1", name: "Spear", actionCost: 1, traits: [], attack: { band: "high", value: 18 }, damage: [{ expression: "2d8+10", type: "piercing" }], effect: "" }];
+  creature.tactics = "Circle isolated targets.";
+  creature.morale = "Withdraw when bloodied.";
+  const adapter = createWebMCPAdapter({ snapshot: snapshot() });
+  const result = await adapter.execute("sidekickdm_validate_custom_creature", { creature });
+  assert.equal(result.ok, true);
+  assert.equal(result.data.benchmarkGuidance.statistics.ac.guidance, "High · 1 above 24");
+  assert.equal(result.data.benchmarkGuidance.strikes[0].damage.guidance, "High · 1 above 18");
+  assert.equal(result.data.benchmarkGuidance.role.recommended.reflex, "high");
 });
 
 test("preflight uses native-equivalent complexity, adjustments, and active phase peak", async () => {

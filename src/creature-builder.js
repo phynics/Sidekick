@@ -15,30 +15,132 @@ const HP_HIGH = [[9, 9], [17, 20], [24, 26], [36, 40], [53, 59], [72, 78], [91, 
 const HP_LOW = [[5, 6], [11, 13], [14, 16], [21, 25], [31, 37], [42, 48], [53, 59], [67, 75], [82, 90], [97, 105], [112, 120], [127, 135], [142, 150], [157, 165], [172, 180]];
 const ATTACK_HIGH = [8, 8, 9, 11, 12, 14, 15, 17, 18, 20, 21, 23, 24, 26, 27];
 const DC_HIGH = [16, 16, 17, 18, 20, 21, 22, 24, 25, 26, 28, 29, 30, 32, 33];
+const DAMAGE = Object.freeze({
+  extreme: ["1d6+1 (4)", "1d6+3 (6)", "1d8+4 (8)", "1d12+4 (11)", "1d12+8 (15)", "2d10+7 (18)", "2d12+7 (20)", "2d12+10 (23)", "2d12+12 (25)", "2d12+15 (28)", "2d12+17 (30)", "2d12+20 (33)", "2d12+22 (35)", "3d12+19 (38)", "3d12+21 (40)"],
+  high: ["1d4+1 (3)", "1d6+2 (5)", "1d6+3 (6)", "1d10+4 (9)", "1d10+6 (12)", "2d8+5 (14)", "2d8+7 (16)", "2d8+9 (18)", "2d10+9 (20)", "2d10+11 (22)", "2d10+13 (24)", "2d12+13 (26)", "2d12+15 (28)", "3d10+14 (30)", "3d10+16 (32)"],
+  moderate: ["1d4 (3)", "1d4+2 (4)", "1d6+2 (5)", "1d8+4 (8)", "1d8+6 (10)", "2d6+5 (12)", "2d6+6 (13)", "2d6+8 (15)", "2d8+8 (17)", "2d8+9 (18)", "2d8+11 (20)", "2d10+11 (22)", "2d10+12 (23)", "3d8+12 (25)", "3d8+14 (27)"],
+  low: ["1d4 (2)", "1d4+1 (3)", "1d4+2 (4)", "1d6+3 (6)", "1d6+5 (8)", "2d4+4 (9)", "2d4+6 (11)", "2d4+7 (12)", "2d6+6 (13)", "2d6+8 (15)", "2d6+9 (16)", "2d6+10 (17)", "2d8+10 (19)", "3d6+10 (20)", "3d6+11 (21)"]
+});
 const indexFor = (level) => level >= -1 && level <= 13 ? level + 1 : -1;
 const range = (minimum, maximum = minimum) => ({ minimum, maximum });
 const bandMap = (values, index) => ({ terrible: range(values[index] - 6), low: range(values[index] - 4), moderate: range(values[index] - 2), high: range(values[index]), extreme: range(values[index] + 2) });
+const titleCase = value => String(value ?? "").replaceAll("_", " ").replace(/^./, letter => letter.toUpperCase());
+const benchmarkRange = value => value?.average != null ? range(value.average) : value;
+const representativeValue = value => Math.round((Number(value.minimum) + Number(value.maximum)) / 2);
+
+export function damageBenchmarkFor(level) {
+  const i = indexFor(Number(level));
+  if (i < 0) return null;
+  return Object.fromEntries(Object.entries(DAMAGE).map(([band, entries]) => {
+    const match = entries[i].match(/^(.*?)\s*\((\d+)\)$/);
+    return [band, { expression: match?.[1] ?? entries[i], average: Number(match?.[2]) }];
+  }));
+}
+
+export function classifyBenchmark(actual, table) {
+  const value = Number(actual);
+  if (!Number.isFinite(value) || !table) return null;
+  const preference = ["moderate", "high", "low", "extreme", "terrible"];
+  const candidates = Object.entries(table).map(([band, raw]) => {
+    const expected = benchmarkRange(raw);
+    const offset = value < expected.minimum ? value - expected.minimum : value > expected.maximum ? value - expected.maximum : 0;
+    return { band, expected, offset, distance: Math.abs(offset), priority: preference.indexOf(band) < 0 ? 99 : preference.indexOf(band) };
+  }).sort((left, right) => left.distance - right.distance || left.priority - right.priority);
+  const closest = candidates[0];
+  if (!closest) return null;
+  const relation = closest.offset < 0 ? "below" : closest.offset > 0 ? "above" : "within";
+  const target = closest.expected.minimum === closest.expected.maximum ? String(closest.expected.minimum) : `${closest.expected.minimum}–${closest.expected.maximum}`;
+  const guidance = closest.offset === 0
+    ? closest.expected.minimum === closest.expected.maximum ? `${titleCase(closest.band)} benchmark ${target}` : `${titleCase(closest.band)} · within ${target}`
+    : `${titleCase(closest.band)} · ${Math.abs(closest.offset)} ${relation} ${target}`;
+  return { band: closest.band, expected: closest.expected, offset: closest.offset, relation, guidance };
+}
+
+export function setStatisticBand(statistic, band, table) {
+  const expected = benchmarkRange(table?.[band]);
+  return expected ? { ...(statistic ?? {}), band, value: representativeValue(expected) } : { ...(statistic ?? {}), band };
+}
+
+export function setStatisticValue(statistic, value, table) {
+  const guidance = classifyBenchmark(value, table);
+  return { ...(statistic ?? {}), band: guidance?.band ?? statistic?.band ?? "moderate", value: Number(value) };
+}
 
 export function benchmarkFor(level) {
   const i = indexFor(Number(level));
   if (i < 0) return null;
   const hp = HP_MODERATE[i];
-  return { level: Number(level), perception: bandMap(AC_HIGH, i), ac: { terrible: range(Math.max(1, AC_LOW[i] - 2)), low: range(AC_LOW[i]), moderate: range(AC_MODERATE[i]), high: range(AC_HIGH[i]), extreme: range(AC_EXTREME[i]) }, saves: { terrible: range(SAVE_MODERATE[i] - 5), low: range(SAVE_MODERATE[i] - 3), moderate: range(SAVE_MODERATE[i]), high: range(SAVE_HIGH[i]), extreme: range(SAVE_HIGH[i] + 1) }, hp: { terrible: range(Math.max(1, HP_LOW[i][0] - 5), Math.max(1, HP_LOW[i][1] - 5)), low: range(...HP_LOW[i]), moderate: range(...hp), high: range(...HP_HIGH[i]), extreme: range(HP_HIGH[i][0] + 35, HP_HIGH[i][1] + 35) }, attack: bandMap(ATTACK_HIGH, i), dc: bandMap(DC_HIGH, i) };
+  return { level: Number(level), perception: bandMap(AC_HIGH, i), ac: { terrible: range(Math.max(1, AC_LOW[i] - 2)), low: range(AC_LOW[i]), moderate: range(AC_MODERATE[i]), high: range(AC_HIGH[i]), extreme: range(AC_EXTREME[i]) }, saves: { terrible: range(SAVE_MODERATE[i] - 5), low: range(SAVE_MODERATE[i] - 3), moderate: range(SAVE_MODERATE[i]), high: range(SAVE_HIGH[i]), extreme: range(SAVE_HIGH[i] + 1) }, hp: { terrible: range(Math.max(1, HP_LOW[i][0] - 5), Math.max(1, HP_LOW[i][1] - 5)), low: range(...HP_LOW[i]), moderate: range(...hp), high: range(...HP_HIGH[i]), extreme: range(HP_HIGH[i][0] + 35, HP_HIGH[i][1] + 35) }, attack: bandMap(ATTACK_HIGH, i), damage: damageBenchmarkFor(level), dc: bandMap(DC_HIGH, i) };
 }
 
 export function recommendedBands(roadmap) {
   const common = { ac: "moderate", fortitude: "moderate", reflex: "moderate", will: "moderate", hp: "moderate", perception: "high", attack: "high", damage: "moderate", dc: "moderate" };
   const presets = {
-    brute: { ...common, ac: "moderate", fortitude: "high", reflex: "low", hp: "high", damage: "high" },
+    brute: { ...common, fortitude: "high", reflex: "low", hp: "high", perception: "moderate", damage: "high" },
     soldier: { ...common, ac: "high", fortitude: "high" }, defender: { ...common, ac: "high", fortitude: "high" },
     sniper: { ...common, hp: "low", reflex: "high", damage: "high", dc: "high" },
-    controller: { ...common, hp: "low", fortitude: "low", will: "high", damage: "low", dc: "high" },
-    support: { ...common, hp: "low", fortitude: "low", will: "high", damage: "low", dc: "high" },
+    controller: { ...common, hp: "low", fortitude: "low", will: "high", attack: "moderate", damage: "low", dc: "high" },
+    support: { ...common, hp: "low", fortitude: "low", will: "high", attack: "moderate", damage: "low", dc: "high" },
     skirmisher: { ...common, reflex: "high" }, ambusher: { ...common, reflex: "high" },
     leader: { ...common, ac: "high", fortitude: "high", will: "high", hp: "high", damage: "high", dc: "high" },
     solo_boss: { ...common, ac: "high", fortitude: "high", reflex: "high", will: "high", hp: "extreme", damage: "high", dc: "high" }
   };
   return { ...(presets[roadmap] ?? common) };
+}
+
+const encounterRoleFor = roadmap => roadmap === "soldier" ? "defender" : ENCOUNTER_ROLES.includes(roadmap) ? roadmap : "brute";
+
+export function applyCreatureRole(creature, roadmap) {
+  const updated = normalizeOriginalCreature(creature);
+  updated.identity.roadmap = roadmap;
+  updated.identity.encounterRole = encounterRoleFor(roadmap);
+  const benchmark = benchmarkFor(updated.identity.level);
+  if (!benchmark) return updated;
+  const bands = recommendedBands(roadmap);
+  updated.perception = setStatisticBand(updated.perception, bands.perception, benchmark.perception);
+  for (const name of DEFENSE_FIELDS) updated.defenses[name] = setStatisticBand(updated.defenses[name], bands[name], name === "ac" ? benchmark.ac : name === "hp" ? benchmark.hp : benchmark.saves);
+  updated.strikes = updated.strikes.map(strike => ({
+    ...strike,
+    attack: setStatisticBand(strike.attack, bands.attack, benchmark.attack),
+    damage: [{ ...(strike.damage?.[0] ?? { type: "physical" }), band: bands.damage, expression: benchmark.damage?.[bands.damage]?.expression ?? strike.damage?.[0]?.expression ?? "" }, ...strike.damage.slice(1)]
+  }));
+  updated.abilities = updated.abilities.map(ability => ability.resolution?.dc ? { ...ability, resolution: { ...ability.resolution, dc: setStatisticBand(ability.resolution.dc, bands.dc, benchmark.dc) } } : ability);
+  return updated;
+}
+
+function averageDamage(expression) {
+  const source = String(expression ?? "").trim();
+  if (!source) return null;
+  const compact = source.replaceAll(" ", "");
+  const terms = [...compact.matchAll(/([+-]?)(?:(\d*)d(\d+)|(\d+))/gi)];
+  if (!terms.length || terms.map(match => match[0]).join("") !== compact) return null;
+  return Math.round(terms.reduce((sum, match) => {
+    const sign = match[1] === "-" ? -1 : 1;
+    return sum + sign * (match[3] ? Number(match[2] || 1) * (Number(match[3]) + 1) / 2 : Number(match[4]));
+  }, 0));
+}
+
+export function creatureBenchmarkGuidance(creature) {
+  const normalized = normalizeOriginalCreature(creature);
+  const benchmark = benchmarkFor(normalized.identity.level);
+  const role = normalized.identity.roadmap;
+  if (!benchmark) return { level: normalized.identity.level, supported: false, role: { role, recommended: recommendedBands(role) }, statistics: {}, strikes: [] };
+  const guide = (statistic, table) => classifyBenchmark(statistic?.value, table);
+  return {
+    level: normalized.identity.level,
+    supported: true,
+    role: { role, recommended: recommendedBands(role) },
+    statistics: {
+      perception: guide(normalized.perception, benchmark.perception), ac: guide(normalized.defenses.ac, benchmark.ac),
+      fortitude: guide(normalized.defenses.fortitude, benchmark.saves), reflex: guide(normalized.defenses.reflex, benchmark.saves),
+      will: guide(normalized.defenses.will, benchmark.saves), hp: guide(normalized.defenses.hp, benchmark.hp)
+    },
+    strikes: normalized.strikes.map(strike => ({
+      id: strike.id,
+      attack: guide(strike.attack, benchmark.attack),
+      damage: classifyBenchmark(averageDamage(strike.damage?.[0]?.expression), benchmark.damage)
+    }))
+  };
 }
 
 export function createEmptyOriginalCreature() {
@@ -113,7 +215,7 @@ export function validateOriginalCreature(creature = createEmptyOriginalCreature(
   if (creature.spellcastingStatus != null && !["none", "preserved_existing"].includes(creature.spellcastingStatus)) structuralErrors.push(issue("invalid_spellcasting_status", "spellcastingStatus", "Spellcasting status must be none or preserved existing."));
   const bands = recommendedBands(creature.identity?.roadmap); if (bands.ac === "high" && bands.hp === "extreme") holisticWarnings.push(issue("extreme_defenses", "defenses", "High AC combined with extreme HP can make this Creature unusually durable.")); if (creature.identity?.roadmap === "solo_boss" && (creature.abilities?.length ?? 0) < 2) holisticWarnings.push(issue("solo_action_economy", "abilities", "A solo boss usually needs additional actions or reactions to keep pace with a party.")); if ((creature.strikes?.length ?? 0) > 3 || (creature.abilities?.length ?? 0) > 8) holisticWarnings.push(issue("complexity", "abilities", "A large action list may be slow to run at the table."));
   const warnings = [...holisticWarnings, ...benchmarkDeviations.map((item) => issue("benchmark_deviation", item.statistic, `${item.statistic} is ${item.actual} versus the ${item.band} benchmark range ${item.expected.minimum}…${item.expected.maximum}.`))];
-  return { structuralErrors, benchmarkDeviations, holisticWarnings: warnings, status: structuralErrors.length ? "incomplete" : warnings.length ? "ready with warnings" : "ready", isStructurallyReady: structuralErrors.length === 0 };
+  return { structuralErrors, benchmarkDeviations, holisticWarnings: warnings, benchmarkGuidance: creatureBenchmarkGuidance(creature), status: structuralErrors.length ? "incomplete" : warnings.length ? "ready with warnings" : "ready", isStructurallyReady: structuralErrors.length === 0 };
 }
 
 export function projectCreatureXP(creatureLevel, partyLevel, quantity = 1) {
@@ -131,25 +233,90 @@ function speedEntries(value) { return Object.entries(value ?? {}).filter(([name]
 function parseSpeeds(value, land) { return { land: Number(land), ...Object.fromEntries(parseLineList(value).map((line) => { const [name, feet] = line.split("|").map((item) => item.trim()); return [name, Number(feet)]; }).filter(([name]) => name)) }; }
 function abilityTemplate(id = "ability_1") { return { id, name: "", kind: "action", actionCost: 2, traits: [], trigger: null, requirements: null, target: null, range: null, area: null, resolution: null, damage: [], conditions: [], duration: null, frequency: null, effectText: "" }; }
 function strikeTemplate(id = "strike_1") { return { id, name: "", actionCost: 1, traits: [], attack: { band: "high", value: 0 }, damage: [{ expression: "", type: "physical" }], effect: "" }; }
+function bandOptions(selected, bands = CREATURE_BANDS) { return bands.map((band) => `<option value="${band}" ${selected === band ? "selected" : ""}>${titleCase(band)}</option>`).join(""); }
+function benchmarkControl(label, valueField, bandField, statistic, table, { index = null, testID = valueField } = {}) {
+  const guidance = classifyBenchmark(statistic?.value, table);
+  const indexAttribute = index == null ? "" : ` data-index="${index}"`;
+  return `<label class="benchmark-control"><span>${label}</span><span class="benchmark-inputs"><input data-field="${valueField}"${indexAttribute} type="number" value="${statistic?.value ?? ""}"><select data-field="${bandField}"${indexAttribute}>${bandOptions(statistic?.band)}</select></span><small class="benchmark-guidance" data-testid="benchmark-guidance-${testID}${index == null ? "" : `-${index}`}">${escapeHTML(guidance?.guidance ?? "Choose a band or enter a value.")}</small></label>`;
+}
+function damageControl(index, damage, table) {
+  const expression = damage?.expression ?? "";
+  const guidance = classifyBenchmark(averageDamage(expression), table);
+  const bands = ["low", "moderate", "high", "extreme"];
+  const selectedBand = damage?.band ?? guidance?.band;
+  return `<label class="benchmark-control"><span>Damage</span><span class="benchmark-inputs"><input data-field="strikeDamage" data-index="${index}" value="${escapeHTML(expression)}"><select data-field="strikeDamageBand" data-index="${index}"><option value="" ${selectedBand ? "" : "selected"}>Choose</option>${bandOptions(selectedBand, bands)}</select></span><small class="benchmark-guidance" data-testid="benchmark-guidance-damage-${index}">${escapeHTML(guidance?.guidance ?? "Enter a damage roll to classify it.")}</small></label>`;
+}
 
 export function createCreatureBuilder({ root, creature = createEmptyOriginalCreature(), partyLevel = 1, onMutation = () => {}, onAutosave = () => {}, onAddToEncounter = () => {} }) {
   if (!root) throw new Error("Original Creature builder requires a root element.");
   let current = normalizeOriginalCreature(creature), history = [], redoHistory = [];
+  let openSections = new Set(current.identity.name ? ["defenses", "strikes"] : ["identity"]);
   const readiness = () => validateOriginalCreature(current);
   const persistence = (origin = undefined) => ({ format: "sidekickdm-original-creature", formatVersion: 1, creature: structuredClone(current), history: structuredClone(history), redoHistory: structuredClone(redoHistory), ...(origin === undefined ? {} : { origin }) });
   const emit = (origin) => { const event = { command: "sidekickdm_create_custom_creature", creature: structuredClone(current), expected_creature_revision: current.revision, origin }; onMutation(event); onAutosave(persistence(origin)); };
   const render = () => {
+    if (root.firstElementChild) openSections = new Set([...root.querySelectorAll("details[open][data-builder-section]")].map(section => section.dataset.builderSection));
     const result = readiness(); const fields = current.identity; const benchmark = benchmarkFor(fields.level);
     const structuralMarkup = result.structuralErrors.map((item) => `<li data-kind="structural-error" data-field="${escapeHTML(item.field)}">${escapeHTML(item.message)}</li>`).join("");
     const warningMarkup = result.holisticWarnings.map((item) => `<li data-kind="design-warning" data-field="${escapeHTML(item.field)}">${escapeHTML(item.message)}</li>`).join("");
     const rows = [["Perception", current.perception, benchmark?.perception], ["AC", current.defenses?.ac, benchmark?.ac], ["Fortitude", current.defenses?.fortitude, benchmark?.saves], ["Reflex", current.defenses?.reflex, benchmark?.saves], ["Will", current.defenses?.will, benchmark?.saves], ["HP", current.defenses?.hp, benchmark?.hp]].map(([label, stat, table]) => { const expected = table?.[stat?.band]; return `<div class="benchmark-row"><span>${label}</span><span data-testid="benchmark-band-${label.toLowerCase()}">${escapeHTML(stat?.band ?? "unset")}</span><span>${expected ? `${expected.minimum}–${expected.maximum}` : "—"}</span><span data-testid="benchmark-actual-${label.toLowerCase()}">${stat?.value ?? "—"}</span></div>`; }).join("");
-    const defenseFields = DEFENSE_FIELDS.map((key) => `<label>${key.toUpperCase()}<input data-field="${key}" type="number" value="${current.defenses?.[key]?.value ?? ""}"><select data-field="${key}Band">${CREATURE_BANDS.map((band) => `<option value="${band}" ${current.defenses?.[key]?.band === band ? "selected" : ""}>${band}</option>`).join("")}</select></label>`).join("");
+    const defenseFields = DEFENSE_FIELDS.map((key) => benchmarkControl(key.toUpperCase(), key, `${key}Band`, current.defenses?.[key], key === "ac" ? benchmark?.ac : key === "hp" ? benchmark?.hp : benchmark?.saves)).join("");
     const editableStrikes = current.strikes.length ? current.strikes : [strikeTemplate()];
-    const strikeMarkup = editableStrikes.map((strike, index) => `<fieldset data-strike-index="${index}"><legend>Strike ${index + 1}</legend><label>Name<input data-field="strikeName" data-index="${index}" value="${escapeHTML(strike.name)}"></label><label>Attack<input data-field="strikeAttack" data-index="${index}" type="number" value="${strike.attack?.value ?? ""}"><select data-field="strikeAttackBand" data-index="${index}">${CREATURE_BANDS.map((band) => `<option value="${band}" ${strike.attack?.band === band ? "selected" : ""}>${band}</option>`).join("")}</select></label><label>Action cost<input data-field="strikeActionCost" data-index="${index}" type="number" min="1" max="3" value="${strike.actionCost ?? 1}"></label><label>Traits<input data-field="strikeTraits" data-index="${index}" value="${escapeHTML(commaList(strike.traits))}"></label><label>Damage<input data-field="strikeDamage" data-index="${index}" value="${escapeHTML(strike.damage?.[0]?.expression ?? "")}"></label><label>Effect<textarea data-field="strikeEffect" data-index="${index}">${escapeHTML(strike.effect)}</textarea></label>${index ? `<button type="button" data-action="remove-strike" data-index="${index}">Remove Strike</button>` : ""}</fieldset>`).join("");
+    const strikeMarkup = editableStrikes.map((strike, index) => `<fieldset data-strike-index="${index}"><legend>Strike ${index + 1}</legend><label>Name<input data-field="strikeName" data-index="${index}" value="${escapeHTML(strike.name)}"></label>${benchmarkControl("Attack", "strikeAttack", "strikeAttackBand", strike.attack, benchmark?.attack, { index, testID: "attack" })}<label>Action cost<input data-field="strikeActionCost" data-index="${index}" type="number" min="1" max="3" value="${strike.actionCost ?? 1}"></label><label>Traits<input data-field="strikeTraits" data-index="${index}" value="${escapeHTML(commaList(strike.traits))}"></label>${damageControl(index, strike.damage?.[0], benchmark?.damage)}<label>Effect<textarea data-field="strikeEffect" data-index="${index}">${escapeHTML(strike.effect)}</textarea></label>${index ? `<button type="button" data-action="remove-strike" data-index="${index}">Remove Strike</button>` : ""}</fieldset>`).join("");
     const editableAbilities = current.abilities.length ? current.abilities : [abilityTemplate()];
-    const abilityMarkup = editableAbilities.map((ability, index) => { const resolution = ability.resolution ?? {}; const dc = resolution.dc ?? {}; const effectField = index === 0 ? "abilityText" : "abilityEffectText"; return `<fieldset data-ability-index="${index}"><legend>Ability ${index + 1}</legend><label>Name<input data-field="abilityName" data-index="${index}" value="${escapeHTML(ability.name)}"></label><label>Kind<select data-field="abilityKind" data-index="${index}">${ABILITY_KINDS.map((kind) => `<option value="${kind}" ${ability.kind === kind ? "selected" : ""}>${kind}</option>`).join("")}</select></label><label>Action cost<input data-field="abilityActionCost" data-index="${index}" type="number" min="1" max="3" value="${ability.actionCost ?? ""}"></label><label>Traits<input data-field="abilityTraits" data-index="${index}" value="${escapeHTML(commaList(ability.traits))}"></label><label>Trigger<textarea data-field="abilityTrigger" data-index="${index}">${escapeHTML(ability.trigger)}</textarea></label><label>Requirements<textarea data-field="abilityRequirements" data-index="${index}">${escapeHTML(ability.requirements)}</textarea></label><label>Target<input data-field="abilityTarget" data-index="${index}" value="${escapeHTML(ability.target)}"></label><label>Range<input data-field="abilityRange" data-index="${index}" value="${escapeHTML(ability.range)}"></label><label>Area<input data-field="abilityArea" data-index="${index}" value="${escapeHTML(ability.area)}"></label><label>Resolution<select data-field="abilityResolutionType" data-index="${index}"><option value="">None</option><option value="save" ${resolution.type === "save" ? "selected" : ""}>Save</option><option value="attack" ${resolution.type === "attack" ? "selected" : ""}>Attack</option></select></label><label>Save<select data-field="abilityResolutionSave" data-index="${index}"><option value="">Choose</option>${["fortitude", "reflex", "will"].map((save) => `<option value="${save}" ${resolution.save === save ? "selected" : ""}>${save}</option>`).join("")}</select></label><label>DC<input data-field="abilityResolutionDC" data-index="${index}" type="number" value="${dc.value ?? ""}"><select data-field="abilityResolutionDCBand" data-index="${index}">${CREATURE_BANDS.map((band) => `<option value="${band}" ${dc.band === band ? "selected" : ""}>${band}</option>`).join("")}</select></label><label>Damage<input data-field="abilityDamage" data-index="${index}" value="${escapeHTML(ability.damage?.[0]?.expression ?? "")}"></label><label>Conditions<input data-field="abilityConditions" data-index="${index}" value="${escapeHTML(commaList(ability.conditions))}"></label><label>Duration<input data-field="abilityDuration" data-index="${index}" value="${escapeHTML(ability.duration)}"></label><label>Frequency<input data-field="abilityFrequency" data-index="${index}" value="${escapeHTML(ability.frequency)}"></label><label>Effect<textarea data-field="${effectField}" data-index="${index}">${escapeHTML(ability.effectText)}</textarea></label>${index ? `<button type="button" data-action="remove-ability" data-index="${index}">Remove Ability</button>` : ""}</fieldset>`; }).join("");
-    root.innerHTML = `<section class="creature-builder"><header><p class="eyebrow">Original Creature · GM-owned</p><h2>${escapeHTML(fields.name || "Untitled Creature")}</h2><span data-testid="creature-readiness">${escapeHTML(result.status)}</span></header><div class="creature-fields"><label>Name<input data-field="name" value="${escapeHTML(fields.name)}"></label><label>Level<input data-field="level" type="number" min="-1" max="20" value="${fields.level}"></label><label>Rarity<input data-field="rarity" value="${escapeHTML(fields.rarity)}"></label><label>Size<input data-field="size" value="${escapeHTML(fields.size)}"></label><label>Concept<textarea data-field="concept">${escapeHTML(fields.concept)}</textarea></label><label>Roadmap<select data-field="roadmap"><option value="">Choose a Roadmap</option>${CREATURE_ROADMAPS.map((value) => `<option value="${value}" ${fields.roadmap === value ? "selected" : ""}>${value}</option>`).join("")}</select></label><label>Encounter role<input data-field="encounterRole" value="${escapeHTML(fields.encounterRole)}"></label><label>Traits<input data-field="traits" value="${escapeHTML(commaList(fields.traits))}"></label><label>Senses<textarea data-field="senses">${escapeHTML(lineList(current.senses))}</textarea></label><label>Languages<textarea data-field="languages">${escapeHTML(lineList(current.languages))}</textarea></label><label>Skills<textarea data-field="skills">${escapeHTML(skillsText(current.skills))}</textarea></label><label>Perception<input data-field="perception" type="number" value="${current.perception?.value ?? ""}"><select data-field="perceptionBand">${CREATURE_BANDS.map((band) => `<option value="${band}" ${current.perception?.band === band ? "selected" : ""}>${band}</option>`).join("")}</select></label>${defenseFields}<label>Immunities<input data-field="immunities" value="${escapeHTML(commaList(current.defenses.immunities))}"></label><label>Weaknesses<input data-field="weaknesses" value="${escapeHTML(commaList(current.defenses.weaknesses))}"></label><label>Resistances<input data-field="resistances" value="${escapeHTML(commaList(current.defenses.resistances))}"></label><label>Land Speed<input data-field="speed" type="number" value="${current.speeds?.land ?? ""}"></label><label>Other Speeds<textarea data-field="otherSpeeds">${escapeHTML(speedEntries(current.speeds))}</textarea></label><label>Tactics<textarea data-field="tactics">${escapeHTML(current.tactics)}</textarea></label><label>Morale<textarea data-field="morale">${escapeHTML(current.morale)}</textarea></label></div><section class="creature-strikes"><h3>Strikes</h3>${strikeMarkup || "<p>No Strikes yet.</p>"}<button type="button" data-action="add-strike">Add Strike</button></section><section class="creature-abilities"><h3>Abilities</h3>${abilityMarkup || "<p>No abilities yet.</p>"}<button type="button" data-action="add-ability">Add Ability</button></section><section class="creature-spellcasting"><h3>Spellcasting</h3><label>Status<select data-field="spellcastingStatus"><option value="none" ${current.spellcastingStatus === "none" ? "selected" : ""}>None</option><option value="preserved_existing" ${current.spellcastingStatus === "preserved_existing" ? "selected" : ""}>Preserved existing</option></select></label><label>Spellcasting blocks<textarea data-field="spellcastingBlocks">${escapeHTML(lineList(current.spellcastingBlocks))}</textarea></label></section><section class="benchmark-table"><h3>Benchmark guidance</h3><div class="benchmark-head"><span>Statistic</span><span>Band</span><span>Expected range</span><span>Actual value</span></div>${rows}</section><section class="creature-readiness" aria-live="polite"><p>${result.structuralErrors.length} structural error(s)</p><ul data-testid="creature-structural-errors">${structuralMarkup || "<li>None</li>"}</ul><p>${result.holisticWarnings.length} design warning(s)</p><ul data-testid="creature-design-warnings">${warningMarkup || "<li>None</li>"}</ul></section><footer><button type="button" data-action="add" ${result.isStructurallyReady ? "" : "disabled"}>Add to encounter</button><button type="button" data-action="undo" ${history.length ? "" : "disabled"}>Undo</button><button type="button" data-action="redo" ${redoHistory.length ? "" : "disabled"}>Redo</button><span>Revision ${current.revision} · ${escapeHTML(current.provenance?.origin ?? "original")} provenance</span></footer></section>`;
+    const abilityMarkup = editableAbilities.map((ability, index) => { const resolution = ability.resolution ?? {}; const dc = resolution.dc ?? {}; const effectField = index === 0 ? "abilityText" : "abilityEffectText"; return `<fieldset data-ability-index="${index}"><legend>Ability ${index + 1}</legend><label>Name<input data-field="abilityName" data-index="${index}" value="${escapeHTML(ability.name)}"></label><label>Kind<select data-field="abilityKind" data-index="${index}">${ABILITY_KINDS.map((kind) => `<option value="${kind}" ${ability.kind === kind ? "selected" : ""}>${kind}</option>`).join("")}</select></label><label>Action cost<input data-field="abilityActionCost" data-index="${index}" type="number" min="1" max="3" value="${ability.actionCost ?? ""}"></label><label>Traits<input data-field="abilityTraits" data-index="${index}" value="${escapeHTML(commaList(ability.traits))}"></label><label>Trigger<textarea data-field="abilityTrigger" data-index="${index}">${escapeHTML(ability.trigger)}</textarea></label><label>Requirements<textarea data-field="abilityRequirements" data-index="${index}">${escapeHTML(ability.requirements)}</textarea></label><label>Target<input data-field="abilityTarget" data-index="${index}" value="${escapeHTML(ability.target)}"></label><label>Range<input data-field="abilityRange" data-index="${index}" value="${escapeHTML(ability.range)}"></label><label>Area<input data-field="abilityArea" data-index="${index}" value="${escapeHTML(ability.area)}"></label><label>Resolution<select data-field="abilityResolutionType" data-index="${index}"><option value="">None</option><option value="save" ${resolution.type === "save" ? "selected" : ""}>Save</option><option value="attack" ${resolution.type === "attack" ? "selected" : ""}>Attack</option></select></label><label>Save<select data-field="abilityResolutionSave" data-index="${index}"><option value="">Choose</option>${["fortitude", "reflex", "will"].map((save) => `<option value="${save}" ${resolution.save === save ? "selected" : ""}>${save}</option>`).join("")}</select></label>${benchmarkControl("DC", "abilityResolutionDC", "abilityResolutionDCBand", dc, benchmark?.dc, { index, testID: "ability-dc" })}<label>Damage<input data-field="abilityDamage" data-index="${index}" value="${escapeHTML(ability.damage?.[0]?.expression ?? "")}"></label><label>Conditions<input data-field="abilityConditions" data-index="${index}" value="${escapeHTML(commaList(ability.conditions))}"></label><label>Duration<input data-field="abilityDuration" data-index="${index}" value="${escapeHTML(ability.duration)}"></label><label>Frequency<input data-field="abilityFrequency" data-index="${index}" value="${escapeHTML(ability.frequency)}"></label><label>Effect<textarea data-field="${effectField}" data-index="${index}">${escapeHTML(ability.effectText)}</textarea></label>${index ? `<button type="button" data-action="remove-ability" data-index="${index}">Remove Ability</button>` : ""}</fieldset>`; }).join("");
+    const isOpen = name => openSections.has(name) ? "open" : "";
+    root.innerHTML = `<section class="creature-builder">
+      <header class="builder-title"><div><p class="eyebrow">Original Creature · GM-owned</p><h2>${escapeHTML(fields.name || "Untitled Creature")}</h2></div><span class="builder-status" data-testid="creature-readiness">${escapeHTML(result.status)}</span></header>
+      <div class="builder-sections">
+        <details class="builder-section" data-builder-section="identity" ${isOpen("identity")}><summary><span>Identity and role</span><small>Name, concept, level, traits, and battlefield purpose</small></summary><div class="creature-fields"><label>Name<input data-field="name" value="${escapeHTML(fields.name)}"></label><label>Level<input data-field="level" type="number" min="-1" max="20" value="${fields.level}"></label><label>Concept<textarea data-field="concept">${escapeHTML(fields.concept)}</textarea></label><label>Creature role<select data-field="roadmap"><option value="">Choose a role</option>${CREATURE_ROADMAPS.map((value) => `<option value="${value}" ${fields.roadmap === value ? "selected" : ""}>${titleCase(value)}</option>`).join("")}</select><small class="role-guidance">Applies recommended defenses, attacks, damage, and DCs.</small></label><label>Encounter role<select data-field="encounterRole">${ENCOUNTER_ROLES.map((value) => `<option value="${value}" ${fields.encounterRole === value ? "selected" : ""}>${titleCase(value)}</option>`).join("")}</select></label><label>Traits<input data-field="traits" value="${escapeHTML(commaList(fields.traits))}"></label><label>Rarity<input data-field="rarity" value="${escapeHTML(fields.rarity)}"></label><label>Size<input data-field="size" value="${escapeHTML(fields.size)}"></label></div></details>
+        <details class="builder-section" data-builder-section="defenses" ${isOpen("defenses")}><summary><span>Defenses and movement</span><small>Core statistics, senses, skills, and speeds</small></summary><div class="creature-fields"><label>Senses<textarea data-field="senses">${escapeHTML(lineList(current.senses))}</textarea></label><label>Languages<textarea data-field="languages">${escapeHTML(lineList(current.languages))}</textarea></label><label>Skills<textarea data-field="skills">${escapeHTML(skillsText(current.skills))}</textarea></label>${benchmarkControl("Perception", "perception", "perceptionBand", current.perception, benchmark?.perception)}${defenseFields}<label>Immunities<input data-field="immunities" value="${escapeHTML(commaList(current.defenses.immunities))}"></label><label>Weaknesses<input data-field="weaknesses" value="${escapeHTML(commaList(current.defenses.weaknesses))}"></label><label>Resistances<input data-field="resistances" value="${escapeHTML(commaList(current.defenses.resistances))}"></label><label>Land Speed<input data-field="speed" type="number" value="${current.speeds?.land ?? ""}"></label><label>Other Speeds<textarea data-field="otherSpeeds">${escapeHTML(speedEntries(current.speeds))}</textarea></label></div></details>
+        <details class="builder-section" data-builder-section="strikes" ${isOpen("strikes")}><summary><span>Strikes</span><small>${current.strikes.length} configured</small></summary><div class="builder-section-body creature-strikes">${strikeMarkup || "<p>No Strikes yet.</p>"}<button type="button" data-action="add-strike">Add Strike</button></div></details>
+        <details class="builder-section" data-builder-section="abilities" ${isOpen("abilities")}><summary><span>Special abilities</span><small>${current.abilities.length} configured</small></summary><div class="builder-section-body creature-abilities">${abilityMarkup || "<p>No abilities yet.</p>"}<button type="button" data-action="add-ability">Add Ability</button></div></details>
+        <details class="builder-section" data-builder-section="tactics" ${isOpen("tactics")}><summary><span>Tactics and morale</span><small>How it behaves and when it stops fighting</small></summary><div class="creature-fields"><label>Tactics<textarea data-field="tactics">${escapeHTML(current.tactics)}</textarea></label><label>Morale<textarea data-field="morale">${escapeHTML(current.morale)}</textarea></label></div></details>
+        <details class="builder-section" data-builder-section="spellcasting" ${isOpen("spellcasting")}><summary><span>Spellcasting</span><small>${current.spellcastingStatus === "none" ? "Not configured" : "Existing blocks preserved"}</small></summary><div class="builder-section-body creature-spellcasting"><label>Status<select data-field="spellcastingStatus"><option value="none" ${current.spellcastingStatus === "none" ? "selected" : ""}>None</option><option value="preserved_existing" ${current.spellcastingStatus === "preserved_existing" ? "selected" : ""}>Preserved existing</option></select></label><label>Spellcasting blocks<textarea data-field="spellcastingBlocks">${escapeHTML(lineList(current.spellcastingBlocks))}</textarea></label></div></details>
+        <details class="builder-section" data-builder-section="guidance" ${isOpen("guidance")}><summary><span>Validation and benchmark report</span><small>${result.structuralErrors.length} errors · ${result.holisticWarnings.length} warnings</small></summary><div class="builder-section-body"><section class="benchmark-table"><h3>Benchmark guidance</h3><div class="benchmark-head"><span>Statistic</span><span>Band</span><span>Expected range</span><span>Actual value</span></div>${rows}</section><section class="creature-readiness" aria-live="polite"><p>${result.structuralErrors.length} structural error(s)</p><ul data-testid="creature-structural-errors">${structuralMarkup || "<li>None</li>"}</ul><p>${result.holisticWarnings.length} design warning(s)</p><ul data-testid="creature-design-warnings">${warningMarkup || "<li>None</li>"}</ul></section></div></details>
+      </div>
+      <footer class="builder-footer"><button type="button" data-action="add" ${result.isStructurallyReady ? "" : "disabled"}>Add to encounter</button><div class="builder-history"><button type="button" class="button-quiet" data-action="undo" ${history.length ? "" : "disabled"}>Undo</button><button type="button" class="button-quiet" data-action="redo" ${redoHistory.length ? "" : "disabled"}>Redo</button></div><span>Revision ${current.revision} · ${escapeHTML(current.provenance?.origin ?? "original")} provenance</span></footer>
+    </section>`;
     const mutate = (operation, origin = "gm") => { const before = structuredClone(current); const next = structuredClone(current); operation(next); next.revision = (Number(current.revision) || 0) + 1; history.push(before); redoHistory = []; current = normalizeOriginalCreature(next); emit(origin); render(); };
+    const synchronizedFields = new Set(["roadmap", "encounterRole", "perception", "perceptionBand", ...DEFENSE_FIELDS, ...DEFENSE_FIELDS.map(name => `${name}Band`), "strikeAttack", "strikeAttackBand", "strikeDamage", "strikeDamageBand", "abilityResolutionDC", "abilityResolutionDCBand"]);
+    const synchronizeBenchmarkField = event => {
+      const field = event.target;
+      const key = field?.dataset?.field;
+      if (!synchronizedFields.has(key)) return;
+      event.stopImmediatePropagation();
+      mutate(value => {
+        const activeBenchmark = benchmarkFor(value.identity.level);
+        const index = Number(field.dataset.index);
+        if (key === "roadmap" || key === "encounterRole") {
+          const role = field.value;
+          Object.assign(value, applyCreatureRole(value, role));
+          if (key === "encounterRole") value.identity.encounterRole = role;
+        } else if (key === "perception") value.perception = setStatisticValue(value.perception, field.value, activeBenchmark?.perception);
+        else if (key === "perceptionBand") value.perception = setStatisticBand(value.perception, field.value, activeBenchmark?.perception);
+        else if (DEFENSE_FIELDS.includes(key) || DEFENSE_FIELDS.some(name => `${name}Band` === key)) {
+          const name = DEFENSE_FIELDS.includes(key) ? key : key.replace(/Band$/, "");
+          const table = name === "ac" ? activeBenchmark?.ac : name === "hp" ? activeBenchmark?.hp : activeBenchmark?.saves;
+          value.defenses[name] = key === name ? setStatisticValue(value.defenses[name], field.value, table) : setStatisticBand(value.defenses[name], field.value, table);
+        } else if (key.startsWith("strike")) {
+          value.strikes[index] ??= strikeTemplate(`strike_${index + 1}`);
+          const strike = value.strikes[index];
+          if (key === "strikeAttack") strike.attack = setStatisticValue(strike.attack, field.value, activeBenchmark?.attack);
+          else if (key === "strikeAttackBand") strike.attack = setStatisticBand(strike.attack, field.value, activeBenchmark?.attack);
+          else if (key === "strikeDamage") { const inferred = classifyBenchmark(averageDamage(field.value), activeBenchmark?.damage); strike.damage ??= [{}]; strike.damage[0] = { ...(strike.damage[0] ?? {}), band: inferred?.band ?? null, expression: field.value }; }
+          else if (key === "strikeDamageBand") { strike.damage ??= [{}]; strike.damage[0] = { ...(strike.damage[0] ?? {}), band: field.value, expression: activeBenchmark?.damage?.[field.value]?.expression ?? strike.damage[0]?.expression ?? "" }; }
+        } else {
+          value.abilities[index] ??= abilityTemplate(`ability_${index + 1}`);
+          const ability = value.abilities[index];
+          ability.resolution ??= { type: "save" };
+          ability.resolution.dc = key === "abilityResolutionDC" ? setStatisticValue(ability.resolution.dc, field.value, activeBenchmark?.dc) : setStatisticBand(ability.resolution.dc, field.value, activeBenchmark?.dc);
+        }
+      });
+    };
+    root.querySelectorAll("[data-field]").forEach(field => {
+      if (synchronizedFields.has(field.dataset.field)) field.addEventListener("change", synchronizeBenchmarkField);
+    });
     root.querySelectorAll("[data-field]").forEach((field) => field.addEventListener("change", () => mutate((value) => {
       const key = field.dataset.field; const index = Number(field.dataset.index); const identityFields = ["name", "rarity", "size", "concept", "roadmap", "encounterRole"];
       if (identityFields.includes(key)) value.identity[key] = field.value; else if (key === "level") value.identity.level = Number(field.value); else if (key === "traits") value.identity.traits = parseCommaList(field.value); else if (key === "senses" || key === "languages") value[key] = parseLineList(field.value); else if (key === "skills") value.skills = parseSkills(field.value); else if (key === "perception" || key === "perceptionBand") { value.perception = { ...(value.perception ?? { band: "high", value: 0 }), ...(key === "perception" ? { value: Number(field.value) } : { band: field.value }) }; } else if (DEFENSE_FIELDS.includes(key) || DEFENSE_FIELDS.some((name) => `${name}Band` === key)) { const name = DEFENSE_FIELDS.includes(key) ? key : key.replace(/Band$/, ""); value.defenses[name] = { ...(value.defenses[name] ?? { band: recommendedBands(value.identity.roadmap ?? "brute")[name] ?? "moderate", value: 0 }), ...(key === name ? { value: Number(field.value) } : { band: field.value }) }; } else if (["immunities", "weaknesses", "resistances"].includes(key)) value.defenses[key] = parseCommaList(field.value); else if (key === "speed") value.speeds.land = Number(field.value); else if (key === "otherSpeeds") value.speeds = parseSpeeds(field.value, value.speeds.land); else if (key === "tactics" || key === "morale" || key === "spellcastingStatus") value[key] = field.value; else if (key === "spellcastingBlocks") value.spellcastingBlocks = parseLineList(field.value); else if (key.startsWith("strike")) { value.strikes[index] ??= strikeTemplate(`strike_${index + 1}`); const strike = value.strikes[index]; if (key === "strikeName") strike.name = field.value; else if (key === "strikeAttack") strike.attack = { ...(strike.attack ?? { band: "high" }), value: Number(field.value) }; else if (key === "strikeAttackBand") strike.attack = { ...(strike.attack ?? { band: "high", value: 0 }), band: field.value }; else if (key === "strikeActionCost") strike.actionCost = Number(field.value); else if (key === "strikeTraits") strike.traits = parseCommaList(field.value); else if (key === "strikeDamage") { strike.damage ??= [{}]; strike.damage[0] = { ...(strike.damage[0] ?? {}), expression: field.value }; } else if (key === "strikeEffect") strike.effect = field.value; } else if (key.startsWith("ability")) { value.abilities[index] ??= abilityTemplate(`ability_${index + 1}`); const ability = value.abilities[index]; const map = { abilityName: "name", abilityKind: "kind", abilityActionCost: "actionCost", abilityTrigger: "trigger", abilityRequirements: "requirements", abilityTarget: "target", abilityRange: "range", abilityArea: "area", abilityDuration: "duration", abilityFrequency: "frequency", abilityEffectText: "effectText", abilityText: "effectText" }; if (map[key]) ability[map[key]] = key === "abilityActionCost" ? (field.value === "" ? null : Number(field.value)) : field.value; else if (key === "abilityTraits" || key === "abilityConditions") ability[key === "abilityTraits" ? "traits" : "conditions"] = parseCommaList(field.value); else if (key.startsWith("abilityResolution")) { ability.resolution ??= {}; if (key === "abilityResolutionType") { if (!field.value) ability.resolution = null; else ability.resolution.type = field.value; } else if (key === "abilityResolutionSave") ability.resolution.save = field.value; else { ability.resolution.dc = { ...(ability.resolution.dc ?? { band: "moderate" }), ...(key === "abilityResolutionDC" ? { value: Number(field.value) } : { band: field.value }) }; } } else if (key === "abilityDamage") ability.damage = field.value ? [{ expression: field.value, type: "" }] : []; }

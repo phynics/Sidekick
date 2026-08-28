@@ -23,7 +23,8 @@ public struct CreatureStatistic: Codable, Equatable, Sendable {
 public struct CreatureDamage: Codable, Equatable, Sendable {
     public var expression: String
     public var type: String
-    public init(expression: String = "", type: String = "") { self.expression = expression; self.type = type }
+    public var band: CreatureBenchmarkBand?
+    public init(expression: String = "", type: String = "", band: CreatureBenchmarkBand? = nil) { self.expression = expression; self.type = type; self.band = band }
 }
 
 public struct CreatureStrike: Codable, Equatable, Sendable {
@@ -269,12 +270,16 @@ public enum CreatureBuilder {
     private static let hpLow = [(5,6),(11,13),(14,16),(21,25),(31,37),(42,48),(53,59),(67,75),(82,90),(97,105),(112,120),(127,135),(142,150),(157,165),(172,180)]
     private static let attackHigh = [8, 8, 9, 11, 12, 14, 15, 17, 18, 20, 21, 23, 24, 26, 27]
     private static let dcHigh = [16, 16, 17, 18, 20, 21, 22, 24, 25, 26, 28, 29, 30, 32, 33]
+    private static let damageExtreme = ["1d6+1 (4)", "1d6+3 (6)", "1d8+4 (8)", "1d12+4 (11)", "1d12+8 (15)", "2d10+7 (18)", "2d12+7 (20)", "2d12+10 (23)", "2d12+12 (25)", "2d12+15 (28)", "2d12+17 (30)", "2d12+20 (33)", "2d12+22 (35)", "3d12+19 (38)", "3d12+21 (40)"]
+    private static let damageHigh = ["1d4+1 (3)", "1d6+2 (5)", "1d6+3 (6)", "1d10+4 (9)", "1d10+6 (12)", "2d8+5 (14)", "2d8+7 (16)", "2d8+9 (18)", "2d10+9 (20)", "2d10+11 (22)", "2d10+13 (24)", "2d12+13 (26)", "2d12+15 (28)", "3d10+14 (30)", "3d10+16 (32)"]
+    private static let damageModerate = ["1d4 (3)", "1d4+2 (4)", "1d6+2 (5)", "1d8+4 (8)", "1d8+6 (10)", "2d6+5 (12)", "2d6+6 (13)", "2d6+8 (15)", "2d8+8 (17)", "2d8+9 (18)", "2d8+11 (20)", "2d10+11 (22)", "2d10+12 (23)", "3d8+12 (25)", "3d8+14 (27)"]
+    private static let damageLow = ["1d4 (2)", "1d4+1 (3)", "1d4+2 (4)", "1d6+3 (6)", "1d6+5 (8)", "2d4+4 (9)", "2d4+6 (11)", "2d4+7 (12)", "2d6+6 (13)", "2d6+8 (15)", "2d6+9 (16)", "2d6+10 (17)", "2d8+10 (19)", "3d6+10 (20)", "3d6+11 (21)"]
 
     public static func benchmarks(level: Int) -> CreatureBenchmarkSet? {
         guard let index = levels.firstIndex(of: level) else { return nil }
         func map(_ values: [Int]) -> [CreatureBenchmarkBand: CreatureBenchmarkRange] { [.high: CreatureBenchmarkRange(minimum: values[index]), .moderate: CreatureBenchmarkRange(minimum: values[index] - 2), .low: CreatureBenchmarkRange(minimum: values[index] - 4), .extreme: CreatureBenchmarkRange(minimum: values[index] + 2), .terrible: CreatureBenchmarkRange(minimum: values[index] - 6)] }
         let hp = hpModerate[index]
-        return CreatureBenchmarkSet(level: level, perception: map(acHigh), armorClass: [.extreme: CreatureBenchmarkRange(minimum: acExtreme[index]), .high: CreatureBenchmarkRange(minimum: acHigh[index]), .moderate: CreatureBenchmarkRange(minimum: acModerate[index]), .low: CreatureBenchmarkRange(minimum: acLow[index]), .terrible: CreatureBenchmarkRange(minimum: max(1, acLow[index] - 2))], savingThrows: [.high: CreatureBenchmarkRange(minimum: saveHigh[index]), .moderate: CreatureBenchmarkRange(minimum: saveModerate[index]), .low: CreatureBenchmarkRange(minimum: saveModerate[index] - 3), .extreme: CreatureBenchmarkRange(minimum: saveHigh[index] + 1), .terrible: CreatureBenchmarkRange(minimum: saveModerate[index] - 5)], hitPoints: [.high: CreatureBenchmarkRange(minimum: hpHigh[index].0, maximum: hpHigh[index].1), .moderate: CreatureBenchmarkRange(minimum: hp.0, maximum: hp.1), .low: CreatureBenchmarkRange(minimum: hpLow[index].0, maximum: hpLow[index].1), .extreme: CreatureBenchmarkRange(minimum: hpHigh[index].0 + 35, maximum: hpHigh[index].1 + 35), .terrible: CreatureBenchmarkRange(minimum: max(1, hpLow[index].0 - 5), maximum: max(1, hpLow[index].1 - 5))], attack: map(attackHigh), dc: map(dcHigh), damage: [:])
+        return CreatureBenchmarkSet(level: level, perception: map(acHigh), armorClass: [.extreme: CreatureBenchmarkRange(minimum: acExtreme[index]), .high: CreatureBenchmarkRange(minimum: acHigh[index]), .moderate: CreatureBenchmarkRange(minimum: acModerate[index]), .low: CreatureBenchmarkRange(minimum: acLow[index]), .terrible: CreatureBenchmarkRange(minimum: max(1, acLow[index] - 2))], savingThrows: [.high: CreatureBenchmarkRange(minimum: saveHigh[index]), .moderate: CreatureBenchmarkRange(minimum: saveModerate[index]), .low: CreatureBenchmarkRange(minimum: saveModerate[index] - 3), .extreme: CreatureBenchmarkRange(minimum: saveHigh[index] + 1), .terrible: CreatureBenchmarkRange(minimum: saveModerate[index] - 5)], hitPoints: [.high: CreatureBenchmarkRange(minimum: hpHigh[index].0, maximum: hpHigh[index].1), .moderate: CreatureBenchmarkRange(minimum: hp.0, maximum: hp.1), .low: CreatureBenchmarkRange(minimum: hpLow[index].0, maximum: hpLow[index].1), .extreme: CreatureBenchmarkRange(minimum: hpHigh[index].0 + 35, maximum: hpHigh[index].1 + 35), .terrible: CreatureBenchmarkRange(minimum: max(1, hpLow[index].0 - 5), maximum: max(1, hpLow[index].1 - 5))], attack: map(attackHigh), dc: map(dcHigh), damage: [.extreme: damageExtreme[index], .high: damageHigh[index], .moderate: damageModerate[index], .low: damageLow[index]])
     }
 
     public static func recommendedBands(for roadmap: CreatureRoadmap) -> [String: CreatureBenchmarkBand] {

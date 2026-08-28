@@ -131,16 +131,56 @@ try {
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "90 XP");
   await evaluate("const s = document.querySelector('[data-catalog-component=group_2][data-catalog-field=adjustment]'); s.value = 'elite'; s.dispatchEvent(new Event('change', { bubbles: true }))");
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "95 XP");
+  const catalogCreatureLedger = await evaluate("({ count: document.querySelector('[data-testid=creature-count-group_2]')?.textContent.trim(), xp: document.querySelector('[data-testid=creature-xp-group_2]')?.textContent.trim(), attacks: document.querySelector('[data-testid=creature-attacks-group_2]')?.textContent.trim(), features: document.querySelector('[data-testid=creature-features-group_2]')?.textContent.trim() })");
+  if (catalogCreatureLedger.count !== "×1" || catalogCreatureLedger.xp !== "15 XP" || !catalogCreatureLedger.attacks || !catalogCreatureLedger.features) throw new Error(`Creature ledger did not emphasize count and XP or list mechanics: ${JSON.stringify(catalogCreatureLedger)}`);
+  const collapsedCreatureManager = await evaluate("(() => { const card = document.querySelector('[data-testid=participant-group_2]'); const manager = card?.querySelector('.creature-manager'); return { open: manager?.open, summary: manager?.querySelector('summary')?.textContent.trim() }; })()");
+  if (collapsedCreatureManager.open || collapsedCreatureManager.summary !== "Manage creature") throw new Error(`Creature editing competed with run-facing mechanics: ${JSON.stringify(collapsedCreatureManager)}`);
+  await evaluate("document.querySelector('[data-testid=participant-group_2] .creature-manager').open = true");
+  if (!await evaluate("document.querySelector('[data-testid=participant-group_2] .creature-manager').open")) throw new Error("Creature management controls did not reveal on request");
+  await command("Emulation.setDeviceMetricsOverride", { width: 720, height: 900, deviceScaleFactor: 1, mobile: false });
+  const narrowLedger = await evaluate("(() => { const card = document.querySelector('[data-testid=participant-group_2]'); const impact = card?.querySelector('.creature-impact'); const identity = card?.querySelector('.creature-identity'); if (!card || !impact || !identity) return null; const impactRect = impact.getBoundingClientRect(); const identityRect = identity.getBoundingClientRect(); return { impactWidth: Math.round(impactRect.width), cardWidth: Math.round(card.getBoundingClientRect().width), impactBelowIdentity: impactRect.top >= identityRect.bottom - 1 }; })()");
+  if (!narrowLedger || narrowLedger.impactWidth >= narrowLedger.cardWidth * 0.7 || !narrowLedger.impactBelowIdentity) throw new Error(`Creature impact controls did not reflow at narrow width: ${JSON.stringify(narrowLedger)}`);
+  await command("Emulation.clearDeviceMetricsOverride");
   await command("Page.reload");
   await waitFor(async () => await evaluate("document.readyState"), "complete");
   await waitFor(async () => await evaluate("Boolean(globalThis.sidekickDM?.engine?.snapshot?.encounter)"), true);
   await waitFor(async () => await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.participantGroups.some(group => group.contentID === 'creature/monster-core/orc-veteran/current')"), true);
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "95 XP");
+  const initialBuilderSections = await evaluate("[...document.querySelectorAll('#creature-builder-root details[open][data-builder-section]')].map(section => section.dataset.builderSection)");
+  if (JSON.stringify(initialBuilderSections) !== JSON.stringify(["identity"])) throw new Error(`New Monster Creator did not progressively disclose its sections: ${JSON.stringify(initialBuilderSections)}`);
   await evaluate(`(async () => { const values = { name: "Mire Scout", level: "5", concept: "A shrine guardian", roadmap: "skirmisher", traits: "humanoid", languages: "Common", perception: "21", ac: "20", fortitude: "11", reflex: "14", will: "11", hp: "75", speed: "25", strikeName: "Spear", strikeAttack: "15", strikeDamage: "1d8+4", tactics: "Flank intruders.", morale: "Withdraw when bloodied." }; for (const [key, value] of Object.entries(values)) { const field = document.querySelector('#creature-builder-root [data-field="' + key + '"]'); field.value = value; field.dispatchEvent(new Event('change', { bubbles: true })); await new Promise(requestAnimationFrame); } })()`);
+  const synchronizedCreatureControls = await evaluate(`(async () => {
+    const change = async (field, value) => {
+      const control = document.querySelector('#creature-builder-root [data-field="' + field + '"]');
+      control.value = value;
+      control.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise(requestAnimationFrame);
+    };
+    await change('acBand', 'high');
+    const categoryToValue = document.querySelector('#creature-builder-root [data-field=ac]').value;
+    await change('ac', '24');
+    const valueToCategory = document.querySelector('#creature-builder-root [data-field=acBand]').value;
+    const acGuidance = document.querySelector('[data-testid=benchmark-guidance-ac]').textContent.trim();
+    await change('strikeDamageBand', 'high');
+    const categoryToDamage = document.querySelector('#creature-builder-root [data-field=strikeDamage]').value;
+    await change('strikeDamage', '2d6+7');
+    const damageToCategory = document.querySelector('#creature-builder-root [data-field=strikeDamageBand]').value;
+    const damageGuidance = document.querySelector('[data-testid=benchmark-guidance-damage-0]').textContent.trim();
+    await change('roadmap', 'controller');
+    const controller = {
+      attack: document.querySelector('#creature-builder-root [data-field=strikeAttack]').value,
+      damage: document.querySelector('#creature-builder-root [data-field=strikeDamage]').value
+    };
+    await change('roadmap', 'skirmisher');
+    return { categoryToValue, valueToCategory, acGuidance, categoryToDamage, damageToCategory, damageGuidance, controller };
+  })()`);
+  if (JSON.stringify(synchronizedCreatureControls) !== JSON.stringify({ categoryToValue: "22", valueToCategory: "extreme", acGuidance: "Extreme · 1 below 25", categoryToDamage: "2d8+7", damageToCategory: "moderate", damageGuidance: "Moderate · 1 above 13", controller: { attack: "13", damage: "2d4+6" } })) throw new Error(`Creature statistic synchronization failed: ${JSON.stringify(synchronizedCreatureControls)}`);
   await waitFor(async () => await evaluate("document.querySelector('#creature-builder-root [data-action=add]')?.disabled"), false);
   await evaluate("document.querySelector('#creature-builder-root [data-action=add]').click()");
   const originalParticipantID = await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.participantGroups.at(-1).id");
   await waitFor(async () => await evaluate(`document.querySelector('[data-testid=participant-${originalParticipantID}]')?.textContent.includes('Mire Scout')`), true);
+  const originalCreatureLedger = await evaluate(`({ count: document.querySelector('[data-testid=creature-count-${originalParticipantID}]')?.textContent.trim(), xp: document.querySelector('[data-testid=creature-xp-${originalParticipantID}]')?.textContent.trim(), attacks: document.querySelector('[data-testid=creature-attacks-${originalParticipantID}]')?.textContent.trim(), features: document.querySelector('[data-testid=creature-features-${originalParticipantID}]')?.textContent.trim() })`);
+  if (originalCreatureLedger.count !== "×1" || originalCreatureLedger.xp !== "40 XP" || !originalCreatureLedger.attacks.includes("Spear") || !originalCreatureLedger.features.includes("No special features recorded")) throw new Error(`Original Creature ledger projection failed: ${JSON.stringify(originalCreatureLedger)}`);
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "135 XP");
   await evaluate(`(async () => { const values = { name: "Mire Bell Snare", traits: "mechanical", description: "A submerged chain catches trespassers.", detection: "18", disableMethods: "Thievery|17", trigger: "A creature crosses the chain.", effect: "The chain knocks the creature prone.", reset: "Reset the chain in ten minutes.", participation: "conditional", participationCondition: "When the bell tolls." }; for (const [key, value] of Object.entries(values)) { const field = document.querySelector('#hazard-builder-root [data-field="' + key + '"]'); field.value = value; field.dispatchEvent(new Event('change', { bubbles: true })); await new Promise(requestAnimationFrame); } })()`);
   await waitFor(async () => await evaluate("document.querySelector('#hazard-builder-root [data-action=add]')?.disabled"), false);

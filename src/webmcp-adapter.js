@@ -7,7 +7,7 @@
 
 import { commitCustomCreature, forkExistingCreature, validateCustomCreature } from "./creature-generation.js";
 import { createSimpleHazard, hazardBenchmarks, validateSimpleHazard } from "./hazard-builder.js";
-import { benchmarkFor } from "./creature-builder.js";
+import { benchmarkFor, CREATURE_ROADMAPS, recommendedBands } from "./creature-builder.js";
 
 export const PROTOCOL_VERSION = 1;
 export const TOOL_PREFIX = "sidekickdm_";
@@ -50,7 +50,7 @@ const componentInput = Object.freeze({
 
 const creatureBenchmarkInput = Object.freeze({
   type: "object",
-  properties: { level: { type: "integer", minimum: -1, maximum: 20 }, statistics: { type: "array", items: { type: "string" } } },
+  properties: { level: { type: "integer", minimum: -1, maximum: 20 }, statistics: { type: "array", items: { type: "string" } }, role: { type: "string", enum: CREATURE_ROADMAPS } },
   required: ["level"],
   additionalProperties: false
 });
@@ -618,9 +618,9 @@ function projectCreatureBenchmarks(input) {
   const benchmark = benchmarkFor(input.level);
   if (!benchmark) return { level: Number(input.level), supported: false, statistics: {} };
   const selected = array(input.statistics);
-  const all = { perception: benchmark.perception, ac: benchmark.ac, armor_class: benchmark.ac, saves: benchmark.saves, saving_throws: benchmark.saves, hp: benchmark.hp, hit_points: benchmark.hp, attack: benchmark.attack, damage: benchmark.attack, dc: benchmark.dc };
+  const all = { perception: benchmark.perception, ac: benchmark.ac, armor_class: benchmark.ac, saves: benchmark.saves, saving_throws: benchmark.saves, hp: benchmark.hp, hit_points: benchmark.hp, attack: benchmark.attack, damage: benchmark.damage, dc: benchmark.dc };
   const statistics = Object.fromEntries(Object.entries(all).filter(([name]) => selected.length === 0 || selected.includes(name)).map(([name, value]) => [name, clone(value)]));
-  return { level: Number(input.level), supported: true, statistics };
+  return { level: Number(input.level), supported: true, statistics, ...(input.role ? { role_guidance: { role: input.role, recommended_bands: recommendedBands(input.role) } } : {}) };
 }
 
 function projectHazardBenchmarks(input) {

@@ -335,11 +335,12 @@ Input:
 ```json
 {
   "level": 5,
-  "statistics": ["ac", "attack", "damage", "hp", "saves", "dc"]
+  "statistics": ["ac", "attack", "damage", "hp", "saves", "dc"],
+  "role": "controller"
 }
 ```
 
-Returns official-style benchmark bands used by the Creature Builder.
+Returns the benchmark bands used by the Creature Builder. Damage bands contain both a roll expression and its average. If `role` is present, `role_guidance.recommended_bands` returns the role profile for defenses, perception, Strike attack, Strike damage, and DCs.
 
 ### 7.4 `sidekickdm_get_hazard_benchmarks`
 
@@ -545,7 +546,7 @@ Creates a custom Creature draft from a Catalog Entry. Existing spellcasting bloc
 
 ### 10.3 `sidekickdm_validate_custom_creature`
 
-Read-only validation of a complete or partial Creature DTO. Returns structural errors, band deviations, and holistic warnings without adding it.
+Read-only validation of a complete or partial Creature DTO. Returns structural errors, band deviations, holistic warnings, and `benchmarkGuidance` without adding the Creature. The guidance classifies each numeric statistic and each Strike attack or damage roll by the nearest band. It also reports the signed distance from that band.
 
 ### 10.4 `sidekickdm_create_custom_creature`
 

@@ -73,9 +73,21 @@ export function createWasiImports(getInstance) {
 }
 
 function readResult(instance) {
-  const pointer = Number(instance.exports.sidekickdm_result_ptr());
   const length = Number(instance.exports.sidekickdm_result_len());
-  if (!pointer || length <= 0) throw new Error("Sidekick DM returned an empty result.");
+  if (length <= 0) throw new Error("Sidekick DM returned an empty result.");
+  if (typeof instance.exports.sidekickdm_result_copy === "function") {
+    const pointer = Number(instance.exports.sidekickdm_alloc(length));
+    if (!pointer) throw new Error("Sidekick DM could not allocate a result buffer.");
+    try {
+      const copied = Number(instance.exports.sidekickdm_result_copy(pointer, length));
+      if (copied !== length) throw new Error("Sidekick DM returned an incomplete result.");
+      return JSON.parse(new TextDecoder().decode(new Uint8Array(instance.exports.memory.buffer, pointer, length)));
+    } finally {
+      instance.exports.sidekickdm_dealloc(pointer);
+    }
+  }
+  const pointer = Number(instance.exports.sidekickdm_result_ptr());
+  if (!pointer) throw new Error("Sidekick DM returned an empty result.");
   return JSON.parse(new TextDecoder().decode(new Uint8Array(instance.exports.memory.buffer, pointer, length)));
 }
 
@@ -91,7 +103,13 @@ export async function loadSidekickEngine({ url = "./public/wasm/sidekick-engine.
     if (typeof instance.exports._start === "function") instance.exports._start();
     if (instance.exports.sidekickdm_protocol_version() !== 1) throw new Error("Unsupported Sidekick DM boundary protocol.");
     if (instance.exports.sidekickdm_initialize() !== 1) throw new Error("Sidekick DM engine did not initialize.");
-    return { available: true, instance, snapshot: readResult(instance), execute: (command) => execute(instance, command) };
+    const engine = { available: true, instance, snapshot: readResult(instance), execute: null };
+    engine.execute = (command) => {
+      const result = execute(instance, command);
+      if (result?.ok && result.snapshot) engine.snapshot = result.snapshot;
+      return result;
+    };
+    return engine;
   } catch (error) {
     return { available: false, instance: null, snapshot: null, reason: error instanceof Error ? error.message : String(error), execute: null };
   }

@@ -6,7 +6,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const wasmBytes = readFileSync(resolve(root, "public/wasm/sidekick-engine.wasm"));
 const module = new WebAssembly.Module(wasmBytes);
 const exports = new Set(WebAssembly.Module.exports(module).map(({ name }) => name));
-for (const name of ["memory", "_start", "sidekickdm_protocol_version", "sidekickdm_alloc", "sidekickdm_dealloc", "sidekickdm_initialize", "sidekickdm_execute", "sidekickdm_result_ptr", "sidekickdm_result_len"]) {
+for (const name of ["memory", "_start", "sidekickdm_protocol_version", "sidekickdm_alloc", "sidekickdm_dealloc", "sidekickdm_initialize", "sidekickdm_execute", "sidekickdm_result_ptr", "sidekickdm_result_len", "sidekickdm_result_copy"]) {
   if (!exports.has(name)) throw new Error(`Native engine export missing: ${name}`);
 }
 const originalFetch = globalThis.fetch;

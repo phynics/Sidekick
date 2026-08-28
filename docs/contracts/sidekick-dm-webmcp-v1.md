@@ -61,7 +61,7 @@ Unexpected programming faults may reject/throw. Expected domain failures return 
 
 ## 3. Mutation preconditions
 
-Every mutation requires:
+Every mutation against an existing Encounter requires:
 
 ```json
 {
@@ -85,6 +85,8 @@ During a Generation Run, every mutation additionally requires:
   "generation_run_id": "run_..."
 }
 ```
+
+`sidekickdm_create_encounter` is the only mutation that does not require an existing Encounter ID or revision. Encounter setup tools reject writes while a Generation Run is active.
 
 Rules:
 
@@ -353,7 +355,53 @@ Input:
 
 ## 8. Generation lifecycle tools
 
-### 8.1 `sidekickdm_preflight_generation`
+### 8.1 `sidekickdm_create_encounter`
+
+Creates a new Encounter Draft with its Party Snapshot and Threat Target. This tool replaces the active draft, has `destructiveHint: true`, and rejects the request while a Generation Run is active.
+
+Input:
+
+```json
+{
+  "title": "Rotheart Infestation",
+  "effective_level": 7,
+  "size": 4,
+  "kind": "severe"
+}
+```
+
+For a custom Threat Target, set `kind` to `custom` and provide a nonnegative `custom_xp`.
+
+### 8.2 `sidekickdm_set_party_snapshot`
+
+Sets the GM-confirmed effective party level and size before generation begins.
+
+Input:
+
+```json
+{
+  "encounter_id": "enc_...",
+  "expected_encounter_revision": 2,
+  "effective_level": 7,
+  "size": 5
+}
+```
+
+### 8.3 `sidekickdm_set_threat_target`
+
+Sets the GM-confirmed Threat Target before generation begins.
+
+Input:
+
+```json
+{
+  "encounter_id": "enc_...",
+  "expected_encounter_revision": 3,
+  "kind": "severe"
+}
+```
+
+### 8.4 `sidekickdm_preflight_generation`
 
 Read-only. Estimates an outline without mutation.
 
@@ -374,7 +422,7 @@ Input:
 
 Returns estimated budget and warnings.
 
-### 8.2 `sidekickdm_begin_generation`
+### 8.5 `sidekickdm_begin_generation`
 
 Input:
 
@@ -393,7 +441,7 @@ Output includes new `generation_run_id`, opening revision, and current checklist
 
 Every Generation Run mutation requires that returned `generation_run_id`. A missing ID is a field error; an ID used when no run is active returns `no_active_generation`.
 
-### 8.3 `sidekickdm_finish_generation`
+### 8.6 `sidekickdm_finish_generation`
 
 Input:
 
@@ -409,7 +457,7 @@ Input:
 
 Finishes if no structural error prevents serialization/running. Warnings do not block. The run collapses into one history entry and review state becomes `needed`.
 
-### 8.4 `sidekickdm_resume_generation`
+### 8.7 `sidekickdm_resume_generation`
 
 Reload never resumes agent execution automatically. It marks an active run `interrupted`; ordinary Generation Run mutations then return `generation_interrupted`. The agent must explicitly resume with the current revisions:
 
@@ -422,7 +470,7 @@ Reload never resumes agent execution automatically. It marks an active run `inte
 }
 ```
 
-### 8.5 `sidekickdm_cancel_generation`
+### 8.8 `sidekickdm_cancel_generation`
 
 Restores the opening snapshot atomically.
 
@@ -449,6 +497,7 @@ Input:
   "encounter_id": "enc_...",
   "generation_run_id": "run_...",
   "expected_encounter_revision": 6,
+  "expected_brief_revision": 3,
   "expected_constraints_revision": 4,
   "assumptions": [
     "The encounter occurs in a flooded ruin.",
@@ -618,7 +667,7 @@ Outside an active Generation Run, undoes one atomic history entry. A finished Ge
 
 Reapplies one undone entry. A new mutation after Undo clears the redo branch.
 
-Resetting an Encounter or deleting library records is not exposed through WebMCP v1.
+`sidekickdm_create_encounter` can replace the active Encounter before a Generation Run begins. WebMCP v1 does not expose library-record deletion.
 
 ## 13. Tool registration lifecycle
 
@@ -641,6 +690,9 @@ get_budget
 get_readiness
 search_catalog
 get_catalog_entry
+create_encounter
+set_party_snapshot
+set_threat_target
 begin_generation
 resume_generation
 add_existing_participant_group

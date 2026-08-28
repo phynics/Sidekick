@@ -1,5 +1,5 @@
 /*
- * Sidekick DM's browser-only, read-only WebMCP adapter.
+ * Sidekick DM's browser-only WebMCP adapter.
  *
  * The adapter deliberately depends on projections supplied by the host. It
  * does not know how the Swift/Wasm engine stores or mutates an Encounter.
@@ -150,11 +150,30 @@ const targetedRevisionProperties = Object.freeze({
 });
 
 const assumptionsProperties = Object.freeze({
-  encounter_id: { type: "string", minLength: 1 },
-  generation_run_id: { type: "string", minLength: 1 },
-  expected_encounter_revision: { type: "integer", minimum: 0 },
-  expected_constraints_revision: { type: "integer", minimum: 0 },
+  ...revisionProperties,
   assumptions: { type: "array", items: { type: "string" } }
+});
+
+const createEncounterProperties = Object.freeze({
+  title: { type: "string", minLength: 1 },
+  effective_level: { type: "integer", minimum: 1, maximum: 20 },
+  size: { type: "integer", minimum: 1, maximum: 8 },
+  kind: { type: "string", enum: ["trivial", "low", "moderate", "severe", "extreme", "custom"] },
+  custom_xp: { type: ["integer", "null"], minimum: 0 }
+});
+
+const partySnapshotProperties = Object.freeze({
+  encounter_id: revisionProperties.encounter_id,
+  expected_encounter_revision: revisionProperties.expected_encounter_revision,
+  effective_level: { type: "integer", minimum: 1, maximum: 20 },
+  size: { type: "integer", minimum: 1, maximum: 8 }
+});
+
+const threatTargetProperties = Object.freeze({
+  encounter_id: revisionProperties.encounter_id,
+  expected_encounter_revision: revisionProperties.expected_encounter_revision,
+  kind: { type: "string", enum: ["trivial", "low", "moderate", "severe", "extreme", "custom"] },
+  custom_xp: { type: ["integer", "null"], minimum: 0 }
 });
 
 const creativeBriefProperties = Object.freeze({
@@ -191,14 +210,14 @@ function definition(name, description, inputSchema, { untrusted = false } = {}) 
   });
 }
 
-function writeDefinition(name, description, properties, required = []) {
+function writeDefinition(name, description, properties, required = [], { destructive = false } = {}) {
   return Object.freeze({
     name,
     description,
     inputSchema: { type: "object", properties, required, additionalProperties: false },
     readOnlyHint: false,
     untrustedContentHint: true,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false, untrustedContentHint: true }
+    annotations: { readOnlyHint: false, destructiveHint: destructive, idempotentHint: false, openWorldHint: false, untrustedContentHint: true }
   });
 }
 
@@ -219,6 +238,9 @@ const READ_TOOL_DEFINITIONS = Object.freeze([
 ]);
 
 const WRITE_TOOL_DEFINITIONS = Object.freeze([
+  writeDefinition(`${TOOL_PREFIX}create_encounter`, "Create a new Encounter Draft with its Party Snapshot and Threat Target before beginning generation.", createEncounterProperties, ["title", "effective_level", "size", "kind"], { destructive: true }),
+  writeDefinition(`${TOOL_PREFIX}set_party_snapshot`, "Set the GM-confirmed effective party level and size before beginning generation.", partySnapshotProperties, ["encounter_id", "expected_encounter_revision", "effective_level", "size"]),
+  writeDefinition(`${TOOL_PREFIX}set_threat_target`, "Set the GM-confirmed Threat Target before beginning generation.", threatTargetProperties, ["encounter_id", "expected_encounter_revision", "kind"]),
   writeDefinition(`${TOOL_PREFIX}begin_generation`, "Begin a revision-checked Generation Run after acknowledging GM-owned Content Boundaries.", { ...revisionProperties, content_boundaries_acknowledged: { type: "boolean" }, intent_summary: { type: "string" } }, ["encounter_id", "expected_encounter_revision", "expected_brief_revision", "expected_constraints_revision", "content_boundaries_acknowledged"]),
   writeDefinition(`${TOOL_PREFIX}add_existing_participant_group`, "Add one complete supported Catalog Creature during an active Generation Run. Pass the generation_run_id returned by sidekickdm_begin_generation.", { ...revisionProperties, content_id: { type: "string", minLength: 1 }, quantity: { type: "integer", minimum: 1 }, adjustment: { type: "string", enum: ["weak", "normal", "elite"] }, faction: { type: "string" }, participation: freeformObject, encounter_role: { type: "string" }, narrative_tier: { type: "string" }, starting_area: { type: "string" }, shared_tactics: { type: "string" }, morale: { type: "string" } }, generationMutationRequired(["content_id"])),
   definition(`${TOOL_PREFIX}fork_existing_creature`, "Create a detached Forked Creature draft from a complete supported Catalog Creature while preserving existing spellcasting blocks.", { type: "object", properties: { content_id: { type: "string", minLength: 1 }, id: { type: "string" } }, required: ["content_id"], additionalProperties: false }, { untrusted: true }),
@@ -843,8 +865,9 @@ function validateSchemaValue(value, schema, path) {
 }
 
 const MUTATION_NAMES = new Set(TOOL_DEFINITIONS.filter(definition => !definition.readOnlyHint).map(definition => definition.name));
-const AGENT_CONSTRAINT_MUTATIONS = new Set([...MUTATION_NAMES].filter(name => !new Set([`${TOOL_PREFIX}cancel_generation`, `${TOOL_PREFIX}apply_targeted_revision`, `${TOOL_PREFIX}undo`, `${TOOL_PREFIX}redo`]).has(name)));
-const GENERATION_MUTATIONS = new Set([...MUTATION_NAMES].filter(name => !new Set([`${TOOL_PREFIX}begin_generation`, `${TOOL_PREFIX}resume_generation`, `${TOOL_PREFIX}cancel_generation`, `${TOOL_PREFIX}apply_targeted_revision`, `${TOOL_PREFIX}undo`, `${TOOL_PREFIX}redo`]).has(name)));
+const SETUP_MUTATIONS = new Set([`${TOOL_PREFIX}create_encounter`, `${TOOL_PREFIX}set_party_snapshot`, `${TOOL_PREFIX}set_threat_target`]);
+const AGENT_CONSTRAINT_MUTATIONS = new Set([...MUTATION_NAMES].filter(name => !new Set([...SETUP_MUTATIONS, `${TOOL_PREFIX}cancel_generation`, `${TOOL_PREFIX}apply_targeted_revision`, `${TOOL_PREFIX}undo`, `${TOOL_PREFIX}redo`]).has(name)));
+const GENERATION_MUTATIONS = new Set([...MUTATION_NAMES].filter(name => !new Set([...SETUP_MUTATIONS, `${TOOL_PREFIX}begin_generation`, `${TOOL_PREFIX}resume_generation`, `${TOOL_PREFIX}cancel_generation`, `${TOOL_PREFIX}apply_targeted_revision`, `${TOOL_PREFIX}undo`, `${TOOL_PREFIX}redo`]).has(name)));
 const RUN_BOUND_MUTATIONS = new Set([...GENERATION_MUTATIONS, `${TOOL_PREFIX}resume_generation`, `${TOOL_PREFIX}cancel_generation`]);
 
 function validateToolInput(name, input) {
@@ -856,9 +879,14 @@ function validateToolInput(name, input) {
 
 function validateMutationPreconditions(name, input, state) {
   if (!MUTATION_NAMES.has(name)) return;
+  if (name === `${TOOL_PREFIX}create_encounter`) {
+    if (state.generationRunID) throw Object.assign(new Error("Finish or cancel the active Generation Run before replacing the Encounter Draft."), { code: "manual_write_locked" });
+    return;
+  }
   if (!Object.hasOwn(input, "encounter_id") || !Object.hasOwn(input, "expected_encounter_revision")) throw Object.assign(new Error("Mutations require encounter_id and expected_encounter_revision."), { code: "invalid_request" });
   checkEncounter(state, input);
   if (!Number.isInteger(input.expected_encounter_revision)) throw Object.assign(new Error("expected_encounter_revision must be an integer."), { code: "invalid_request" });
+  if (SETUP_MUTATIONS.has(name) && state.generationRunID) throw Object.assign(new Error("Finish or cancel the active Generation Run before changing setup."), { code: "manual_write_locked" });
   if (AGENT_CONSTRAINT_MUTATIONS.has(name) && !Object.hasOwn(input, "expected_constraints_revision")) throw Object.assign(new Error("This mutation requires expected_constraints_revision."), { code: "invalid_request" });
   if (GENERATION_MUTATIONS.has(name) && !state.generationRunID) throw Object.assign(new Error("This mutation requires an active Generation Run."), { code: "no_active_generation" });
   if (RUN_BOUND_MUTATIONS.has(name)) {
@@ -972,6 +1000,10 @@ export function createWebMCPAdapter(options = {}) {
         case `${TOOL_PREFIX}preflight_generation`:
           checkEncounter(state, input);
           return envelope(state, projectPreflight(state.snapshot, requireDraft(state), input));
+        case `${TOOL_PREFIX}create_encounter`:
+        case `${TOOL_PREFIX}set_party_snapshot`:
+        case `${TOOL_PREFIX}set_threat_target`:
+          return await executeMutation(mutationCommand(name, input));
         case `${TOOL_PREFIX}begin_generation`:
           return await executeMutation(mutationCommand(name, input), next => ({ generation_run_id: next.generationRunID, opening_revision: state.encounterRevision, readiness: projectReadiness(next.snapshot, requireDraft(next)) }));
         case `${TOOL_PREFIX}resume_generation`:

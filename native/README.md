@@ -21,3 +21,5 @@ From a clean checkout, run the commands above. The `find` commands select the ex
 `build-native.mjs` copies the executable to `public/wasm/sidekick-engine.wasm`. The static build copies `index.html`, CSS, JavaScript, the JSON asset, and the Wasm module to `dist/`. Serve `dist/` over HTTP because browser module and Wasm loading use HTTP URLs.
 
 The browser loader supplies the minimal `wasi_snapshot_preview1` imports needed by this executable. The browser calls `sidekickdm_execute` through `src/wasm-engine.js`, and `src/app.js` owns the DOM and the tiny JavaScript bridge callback. `SidekickDMCore` has no browser dependency.
+
+The native module owns each encoded result until the next initialize or execute call. JavaScript reads `sidekickdm_result_len`, allocates its own buffer, and calls `sidekickdm_result_copy` before decoding the response. `sidekickdm_result_ptr` remains available for compatibility and stays valid until the native module publishes the next result.

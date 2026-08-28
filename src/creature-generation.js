@@ -1,4 +1,4 @@
-import { createEmptyOriginalCreature, validateOriginalCreature } from "./creature-builder.js";
+import { createEmptyOriginalCreature, normalizeOriginalCreature, validateOriginalCreature } from "./creature-builder.js";
 
 const clone = (value) => typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
 const value = (object, camel, snake = camel) => object?.[camel] ?? object?.[snake];
@@ -97,7 +97,7 @@ export function forkExistingCreature(entry, { id = null, createdAt = "", origin 
 
 /** Validate, then return a detached commit snapshot for the host mutation. */
 export function commitCustomCreature(creature, { origin = "webmcp" } = {}) {
-  const snapshot = clone(creature);
+  const snapshot = normalizeOriginalCreature(clone(creature));
   const readiness = validateCustomCreature(snapshot);
   if (readiness.structuralErrors.length > 0) {
     throw new CreatureGenerationError("creature_structural_errors", "The Creature has structural errors.", { fields: readiness.structuralErrors.map((item) => item.field) });

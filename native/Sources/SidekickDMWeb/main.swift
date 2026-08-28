@@ -19,12 +19,25 @@ private struct CommandResult: Encodable {
 }
 
 private nonisolated(unsafe) var store = EncounterStore()
-private nonisolated(unsafe) var output = [UInt8]()
+private nonisolated(unsafe) var outputPointer: UnsafeMutablePointer<UInt8>?
+private nonisolated(unsafe) var outputLength: Int32 = 0
+
+private func replaceOutput(with bytes: [UInt8]) {
+    outputPointer?.deallocate()
+    outputPointer = nil
+    outputLength = Int32(bytes.count)
+    guard !bytes.isEmpty else { return }
+    let pointer = UnsafeMutablePointer<UInt8>.allocate(capacity: bytes.count)
+    bytes.withUnsafeBufferPointer { buffer in
+        pointer.initialize(from: buffer.baseAddress!, count: bytes.count)
+    }
+    outputPointer = pointer
+}
 
 private func publish(_ value: some Encodable) {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
-    output = (try? encoder.encode(value)).map(Array.init) ?? []
+    replaceOutput(with: (try? encoder.encode(value)).map(Array.init) ?? [])
 }
 
 private func publishSnapshot(error: String? = nil) {
@@ -56,7 +69,12 @@ public func sidekickDMExecute(_ pointer: UnsafePointer<UInt8>?, _ length: Int32)
         return 0
     }
     do {
-        let value = try JSONSerialization.jsonObject(with: Data(bytes: pointer, count: Int(length)), options: [])
+        let value: Any
+        do {
+            value = try JSONSerialization.jsonObject(with: Data(bytes: pointer, count: Int(length)), options: [])
+        } catch {
+            throw SidekickDomainError("invalid_request", "Command input must be valid JSON.")
+        }
         guard let command = value as? [String: Any] else { throw SidekickDomainError("invalid_request", "Command input must be a JSON object.") }
         try SidekickCommandExecutor.execute(command, in: store)
         publish(CommandResult(protocolVersion: 1, encounterRevision: store.draft.revision, briefRevision: store.draft.briefRevision ?? 0, constraintsRevision: store.draft.constraintsRevision, generationRunID: store.draft.generation?.id, ok: true, snapshot: store.snapshot(), error: nil))
@@ -71,7 +89,17 @@ public func sidekickDMExecute(_ pointer: UnsafePointer<UInt8>?, _ length: Int32)
 }
 
 @_cdecl("sidekickdm_result_ptr")
-public func sidekickDMResultPointer() -> UnsafePointer<UInt8>? { output.withUnsafeBufferPointer { $0.baseAddress } }
+public func sidekickDMResultPointer() -> UnsafePointer<UInt8>? {
+    guard let outputPointer else { return nil }
+    return UnsafePointer(outputPointer)
+}
 
 @_cdecl("sidekickdm_result_len")
-public func sidekickDMResultLength() -> Int32 { Int32(output.count) }
+public func sidekickDMResultLength() -> Int32 { outputLength }
+
+@_cdecl("sidekickdm_result_copy")
+public func sidekickDMResultCopy(_ destination: UnsafeMutableRawPointer?, _ capacity: Int32) -> Int32 {
+    guard let destination, let outputPointer, outputLength > 0, capacity >= outputLength else { return 0 }
+    destination.copyMemory(from: outputPointer, byteCount: Int(outputLength))
+    return outputLength
+}

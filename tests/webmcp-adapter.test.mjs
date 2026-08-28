@@ -128,6 +128,32 @@ test("defines the version 1 read-only Sidekick surface", () => {
   assert.equal(toolDefinitions().find(({ name }) => name.endsWith("get_budget")).untrustedContentHint, false);
 });
 
+test("exposes pre-generation encounter setup without run-bound fields", () => {
+  const definitions = toolDefinitions();
+  const schema = name => definitions.find(definition => definition.name === name)?.inputSchema;
+  assert.deepEqual(schema("sidekickdm_create_encounter").required, ["title", "effective_level", "size", "kind"]);
+  assert.deepEqual(schema("sidekickdm_set_party_snapshot").required, ["encounter_id", "expected_encounter_revision", "effective_level", "size"]);
+  assert.deepEqual(schema("sidekickdm_set_threat_target").required, ["encounter_id", "expected_encounter_revision", "kind"]);
+  assert.equal(schema("sidekickdm_create_encounter").properties.generation_run_id, undefined);
+  assert.equal(schema("sidekickdm_set_party_snapshot").properties.expected_constraints_revision, undefined);
+});
+
+test("routes encounter setup directly to the native command boundary", async () => {
+  const commands = [];
+  const engine = { snapshot: snapshot(), execute(command) { commands.push(command); return { ok: true, snapshot: this.snapshot }; } };
+  const adapter = createWebMCPAdapter({ engine });
+
+  assert.equal((await adapter.execute("sidekickdm_create_encounter", { title: "Infested Forest", effective_level: 7, size: 4, kind: "severe" })).ok, true);
+  assert.equal((await adapter.execute("sidekickdm_set_party_snapshot", { encounter_id: "enc_test", expected_encounter_revision: 4, effective_level: 7, size: 5 })).ok, true);
+  assert.equal((await adapter.execute("sidekickdm_set_threat_target", { encounter_id: "enc_test", expected_encounter_revision: 4, kind: "severe" })).ok, true);
+  assert.deepEqual(commands.map(command => command.command), [
+    "sidekickdm_create_encounter",
+    "sidekickdm_set_party_snapshot",
+    "sidekickdm_set_threat_target"
+  ]);
+  assert.ok(commands.every(command => command.origin === "webmcp"));
+});
+
 test("projects Hazard Builder benchmarks and complexity-specific attack and damage", async () => {
   const adapter = createWebMCPAdapter({ snapshot: snapshot() });
   const simple = await adapter.execute("sidekickdm_get_hazard_benchmarks", { level: 5, complexity: "simple" });
@@ -417,5 +443,6 @@ test("keeps every documented WebMCP tool registered and critical schemas contrac
   assert.deepEqual(schema("sidekickdm_get_component").required, ["encounter_id", "component_id"]);
   assert.deepEqual(schema("sidekickdm_get_encounter_packet").required, ["encounter_id"]);
   assert.equal(schema("sidekickdm_set_generation_assumptions").properties.generation_run_id.type, "string");
+  assert.equal(schema("sidekickdm_set_generation_assumptions").properties.expected_brief_revision.type, "integer");
   assert.deepEqual(schema("sidekickdm_resume_generation").required, ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision"]);
 });

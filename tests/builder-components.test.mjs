@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  benchmarkFor,
   createEmptyOriginalCreature,
   validateOriginalCreature
 } from "../src/creature-builder.js";
+import { commitCustomCreature } from "../src/creature-generation.js";
 import {
   createEmptySimpleHazard,
   createSimpleHazard,
@@ -49,6 +51,48 @@ test("Original Creature validation accepts defense, ability, and spellcasting fi
   assert.equal(result.structuralErrors.length, 0);
   assert.equal(creature.defenses.immunities[0], "sleep");
   assert.deepEqual(creature.spellcastingBlocks, ["Occult innate spells", "Cantrip: daze"]);
+});
+
+test("Creature save benchmarks stay aligned with the native engine", () => {
+  assert.deepEqual(benchmarkFor(6).saves, {
+    terrible: { minimum: 9, maximum: 9 },
+    low: { minimum: 11, maximum: 11 },
+    moderate: { minimum: 14, maximum: 14 },
+    high: { minimum: 17, maximum: 17 },
+    extreme: { minimum: 18, maximum: 18 }
+  });
+  assert.deepEqual(benchmarkFor(8).saves, {
+    terrible: { minimum: 11, maximum: 11 },
+    low: { minimum: 13, maximum: 13 },
+    moderate: { minimum: 16, maximum: 16 },
+    high: { minimum: 19, maximum: 19 },
+    extreme: { minimum: 20, maximum: 20 }
+  });
+});
+
+test("custom Creature commits reject native enum mismatches and fill decoder-required fields", () => {
+  const invalid = completeCreature();
+  invalid.identity.encounterRole = "boss controller";
+  assert.throws(
+    () => commitCustomCreature(invalid),
+    (error) => error.code === "creature_structural_errors" && error.details.fields.includes("identity.encounterRole")
+  );
+
+  const sparse = completeCreature();
+  sparse.strikes[0] = { ...sparse.strikes[0], traits: undefined, effect: undefined };
+  sparse.abilities[0] = {
+    id: "ability_1",
+    name: "Dissonant toll",
+    kind: "reaction",
+    actionCost: null,
+    effectText: "The bell tolls."
+  };
+  const committed = commitCustomCreature(sparse);
+  assert.deepEqual(committed.strikes[0].traits, []);
+  assert.equal(committed.strikes[0].effect, "");
+  assert.deepEqual(committed.abilities[0].traits, []);
+  assert.deepEqual(committed.abilities[0].damage, []);
+  assert.deepEqual(committed.abilities[0].conditions, []);
 });
 
 test("Original Creature readiness keeps structural errors separate from design warnings", () => {

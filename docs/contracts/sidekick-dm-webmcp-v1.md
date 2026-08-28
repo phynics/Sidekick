@@ -391,6 +391,8 @@ Input:
 
 Output includes new `generation_run_id`, opening revision, and current checklist/readiness.
 
+Every Generation Run mutation requires that returned `generation_run_id`. A missing ID is a field error; an ID used when no run is active returns `no_active_generation`.
+
 ### 8.3 `sidekickdm_finish_generation`
 
 Input:
@@ -407,7 +409,20 @@ Input:
 
 Finishes if no structural error prevents serialization/running. Warnings do not block. The run collapses into one history entry and review state becomes `needed`.
 
-### 8.4 `sidekickdm_cancel_generation`
+### 8.4 `sidekickdm_resume_generation`
+
+Reload never resumes agent execution automatically. It marks an active run `interrupted`; ordinary Generation Run mutations then return `generation_interrupted`. The agent must explicitly resume with the current revisions:
+
+```json
+{
+  "encounter_id": "enc_...",
+  "generation_run_id": "run_...",
+  "expected_encounter_revision": 19,
+  "expected_constraints_revision": 4
+}
+```
+
+### 8.5 `sidekickdm_cancel_generation`
 
 Restores the opening snapshot atomically.
 
@@ -567,7 +582,7 @@ Fields: dimensions, zones, elevations, cover, concealment, difficult terrain, en
 
 ### 11.4 `sidekickdm_set_running_guidance`
 
-Fields: opening tactics, ongoing tactics, participant coordination/conflict, triggers/reinforcements, morale summary, adjudication issues.
+Required fields: participant roles, opening tactics, ongoing tactics, participant coordination/conflict, triggers/reinforcements, and morale summary. `adjudication_issues` is optional and defaults to an empty array.
 
 ### 11.5 `sidekickdm_set_cohesion`
 
@@ -627,6 +642,7 @@ get_readiness
 search_catalog
 get_catalog_entry
 begin_generation
+resume_generation
 add_existing_participant_group
 validate_custom_creature
 create_custom_creature

@@ -120,10 +120,18 @@ public enum SidekickCommandExecutor {
         if let expectedBrief, expectedBrief != (store.draft.briefRevision ?? 0) { throw SidekickDomainError("stale_brief_revision", "The Encounter Brief changed after it was inspected.", details: ["expected_brief_revision": "\(expectedBrief)", "current_brief_revision": "\(store.draft.briefRevision ?? 0)"]) }
         if let expectedConstraints, expectedConstraints != store.draft.constraintsRevision { throw SidekickDomainError("stale_constraints", "The Content Boundaries or Party Snapshot changed after it was inspected.", details: ["expected_constraints_revision": "\(expectedConstraints)", "current_constraints_revision": "\(store.draft.constraintsRevision)"]) }
         let reads = ["sidekickdm_get_budget", "sidekickdm_get_encounter_summary", "sidekickdm_get_encounter_brief", "sidekickdm_get_readiness"]
+        let generationOnly = Set(["sidekickdm_add_participant_group", "sidekickdm_add_existing_participant_group", "sidekickdm_update_participant_group", "sidekickdm_create_custom_creature", "sidekickdm_update_creature", "sidekickdm_update_custom_creature", "sidekickdm_upsert_npc_profile", "sidekickdm_add_hazard", "sidekickdm_add_existing_hazard", "sidekickdm_create_simple_hazard", "sidekickdm_update_hazard", "sidekickdm_remove_component", "sidekickdm_upsert_phase", "sidekickdm_set_encounter_identity", "sidekickdm_set_setup", "sidekickdm_set_battlefield_guidance", "sidekickdm_set_running_guidance", "sidekickdm_set_cohesion", "sidekickdm_set_information_visibility", "sidekickdm_set_outcomes", "sidekickdm_set_reward_guidance", "sidekickdm_set_alternative_resolutions", "sidekickdm_set_generation_assumptions", "sidekickdm_update_creative_brief", "sidekickdm_finish_generation"])
+        let targetedForward = command["targeted_revision"] as? Bool == true
+        if origin == "webmcp", generationOnly.contains(name), store.draft.generation == nil, !targetedForward {
+            throw SidekickDomainError("no_active_generation", "This mutation requires an active Generation Run.")
+        }
         if let activeRun = store.draft.generation {
             let activeMutation = !reads.contains(name) && name != "sidekickdm_begin_generation"
             if activeMutation {
                 guard origin != "gm" && origin != "manual" else { throw SidekickDomainError("manual_write_locked", "GM writes are locked while a Generation Run is active.") }
+                if activeRun.state == "interrupted", name != "sidekickdm_resume_generation", name != "sidekickdm_cancel_generation" {
+                    throw SidekickDomainError("generation_interrupted", "The Generation Run was interrupted by a reload. Resume or cancel it before retrying.")
+                }
                 if name != "sidekickdm_cancel_generation" {
                     guard let expectedConstraints else { throw SidekickDomainError("invalid_request", "Active Generation Run mutations require the current Constraints Revision.") }
                     guard expectedConstraints == store.draft.constraintsRevision else { throw SidekickDomainError("stale_constraints", "The Content Boundaries or Party Snapshot changed after it was inspected.", details: ["expected_constraints_revision": "\(expectedConstraints)", "current_constraints_revision": "\(store.draft.constraintsRevision)"]) }
@@ -375,6 +383,7 @@ public enum SidekickCommandExecutor {
             guard allowed.contains(target) else { throw SidekickDomainError("invalid_request", "A supported Encounter Packet section is required for a targeted revision.") }
             var forwarded = command
             forwarded["command"] = target
+            forwarded["targeted_revision"] = true
             try execute(forwarded, in: store)
         case "sidekickdm_set_setup": try mutatePacketSection(command, store: store, expected: expected, origin: origin, description: "Updated Encounter setup") { $0.setup = try requiredPacketSection(PacketSetupSection.self, command: command) }
         case "sidekickdm_set_battlefield_guidance": try mutatePacketSection(command, store: store, expected: expected, origin: origin, description: "Updated battlefield guidance") { $0.battlefield = try requiredPacketSection(PacketBattlefieldSection.self, command: command) }
@@ -413,11 +422,15 @@ public enum SidekickCommandExecutor {
                 $0.generation = GenerationState(id: runID, openingDraftJSON: opening, intentSummary: (command["intent_summary"] as? String) ?? "")
                 $0.provenance.origin = origin
             }
+        case "sidekickdm_resume_generation":
+            guard let generation = store.draft.generation else { throw SidekickDomainError("no_active_generation", "There is no interrupted Generation Run to resume.") }
+            guard generation.state == "interrupted" else { throw SidekickDomainError("generation_not_interrupted", "Only an interrupted Generation Run can be resumed.") }
+            try store.mutate(description: "Resumed Generation Run", origin: origin, expectedRevision: expected) { $0.generation?.state = "active" }
         case "sidekickdm_set_generation_assumptions":
             guard let assumptions = command["assumptions"] as? [String] else { throw SidekickDomainError("invalid_request", "Generation assumptions must be an array of strings.") }
             try store.mutate(description: "Updated Generation Run assumptions", origin: origin, expectedRevision: expected) { $0.brief.generationAssumptions = assumptions }
         case "sidekickdm_update_creative_brief":
-            let changes = (command["changes"] as? [String: Any]) ?? command.filter { !["command", "origin", "encounter_id", "expected_encounter_revision", "expected_constraints_revision", "expected_brief_revision", "generation_run_id"].contains($0.key) }
+            let changes = (command["changes"] as? [String: Any]) ?? command.filter { !["command", "origin", "encounter_id", "expected_revision", "expected_encounter_revision", "expected_constraints_revision", "expected_brief_revision", "generation_run_id"].contains($0.key) }
             let allowed = Set(["purpose", "premise", "theme", "environment", "tone", "desired_complexity", "existing_vs_custom", "approximate_play_minutes", "preferred_traits", "excluded_traits", "source_restrictions"])
             let attempted = Set(changes.keys).subtracting(allowed)
             guard attempted.isEmpty else { throw SidekickDomainError("content_constraint_not_acknowledged", "Creative Brief updates cannot modify Party Snapshot or GM-owned Content Boundaries.") }
@@ -575,10 +588,21 @@ public enum SidekickCommandExecutor {
     private static func packetSection<T: Decodable>(_ type: T.Type, command: [String: Any], keys: [String] = ["value"]) throws -> T? {
         for key in keys {
             guard let payload = command[key] else { continue }
-            guard JSONSerialization.isValidJSONObject(payload), let data = try? JSONSerialization.data(withJSONObject: payload), let decoded = try? JSONDecoder().decode(type, from: data) else {
-                throw SidekickDomainError("invalid_packet_section", "The Encounter Packet section payload is invalid.")
+            guard JSONSerialization.isValidJSONObject(payload) else { throw SidekickDomainError("invalid_packet_section", "The Encounter Packet section payload is invalid.", details: ["field": key]) }
+            do {
+                let data = try JSONSerialization.data(withJSONObject: payload)
+                return try JSONDecoder().decode(type, from: data)
+            } catch let error as DecodingError {
+                let field: String
+                switch error {
+                case .keyNotFound(let missing, let context): field = (context.codingPath + [missing]).map(\.stringValue).joined(separator: ".")
+                case .typeMismatch(_, let context), .valueNotFound(_, let context), .dataCorrupted(let context): field = context.codingPath.map(\.stringValue).joined(separator: ".")
+                @unknown default: field = key
+                }
+                throw SidekickDomainError("invalid_packet_section", "The Encounter Packet section payload is invalid.", details: ["field": field.isEmpty ? key : field])
+            } catch {
+                throw SidekickDomainError("invalid_packet_section", "The Encounter Packet section payload is invalid.", details: ["field": key])
             }
-            return decoded
         }
         return nil
     }

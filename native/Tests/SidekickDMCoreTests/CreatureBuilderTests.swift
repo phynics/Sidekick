@@ -100,7 +100,7 @@ final class CreatureBuilderTests: XCTestCase {
         let creature = completeCreature()
         let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: JSONEncoder().encode(creature)) as? [String: Any])
         let store = EncounterStore(draft: EncounterDraft(brief: EncounterBrief(party: PartySnapshot(effectiveLevel: 5, size: 4))))
-        try SidekickCommandExecutor.execute(["command": "sidekickdm_create_custom_creature", "creature": payload, "expected_revision": 0, "origin": "webmcp"], in: store)
+        try SidekickCommandExecutor.execute(["command": "sidekickdm_create_custom_creature", "creature": payload, "expected_revision": 0, "origin": "agent_test"], in: store)
 
         var revised = creature
         revised.identity.name = "Revised Captain"
@@ -108,12 +108,12 @@ final class CreatureBuilderTests: XCTestCase {
         revised.tactics = "Guards the flooded bell."
         revised.morale = "Withdraws at half health."
         let revisedPayload = try XCTUnwrap(try JSONSerialization.jsonObject(with: JSONEncoder().encode(revised)) as? [String: Any])
-        try SidekickCommandExecutor.execute(["command": "sidekickdm_update_custom_creature", "creature": revisedPayload, "expected_revision": 1, "origin": "webmcp"], in: store)
+        try SidekickCommandExecutor.execute(["command": "sidekickdm_update_custom_creature", "creature": revisedPayload, "expected_revision": 1, "origin": "agent_test"], in: store)
 
         XCTAssertEqual(store.draft.revision, 2)
         XCTAssertEqual(store.draft.originalCreatures?.first?.identity.name, "Revised Captain")
         XCTAssertEqual(store.draft.originalCreatures?.first?.revision, 1)
-        XCTAssertEqual(store.draft.originalCreatures?.first?.provenance.mutationOrigin, "webmcp")
+        XCTAssertEqual(store.draft.originalCreatures?.first?.provenance.mutationOrigin, "agent_test")
         XCTAssertEqual(store.draft.participantGroups.first?.name, "Revised Captain")
         XCTAssertEqual(store.draft.participantGroups.first?.level, 6)
         XCTAssertEqual(store.draft.participantGroups.first?.sharedTactics, "Guards the flooded bell.")

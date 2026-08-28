@@ -137,6 +137,22 @@ export class GenerationRunController {
 
   beginGeneration(input = {}) { return this.begin(input); }
 
+  resume(input = {}) {
+    const encounterID = text(value(input, "encounterID", "encounter_id"));
+    const runID = text(value(input, "generationRunID", "generation_run_id"));
+    this.checkEncounter(encounterID, integer(value(input, "expectedEncounterRevision", "expected_encounter_revision"), NaN));
+    this.checkConstraints(integer(value(input, "expectedConstraintsRevision", "expected_constraints_revision"), NaN));
+    if (!this.generation) throw error("no_active_generation", "There is no interrupted Generation Run to resume.");
+    if (runID !== this.generationRunID) throw error("wrong_generation_run", `Generation Run ${runID} is not active.`, { expected_generation_run_id: runID, current_generation_run_id: this.generationRunID });
+    if (this.generationState !== GENERATION_RUN_STATES.INTERRUPTED) throw error("generation_not_interrupted", "Only an interrupted Generation Run can be resumed.");
+    this.draft.generation.state = GENERATION_RUN_STATES.ACTIVE;
+    this.commitRevision(text(value(input, "origin")) || "webmcp");
+    this.record("Resumed Generation Run", text(value(input, "origin")) || "webmcp");
+    return this.snapshot();
+  }
+
+  resumeGeneration(input = {}) { return this.resume(input); }
+
   mutate(input = {}) {
     const encounterID = text(value(input, "encounterID", "encounter_id"));
     const generationRunID = text(value(input, "generationRunID", "generation_run_id"));
@@ -435,7 +451,7 @@ export class GenerationRunController {
     this.checkConstraints(integer(expectedConstraintsRevision, NaN));
     if (!this.generation) throw error("no_active_generation", "There is no active Generation Run.");
     if (text(generationRunID) !== this.generationRunID) throw error("wrong_generation_run", `Generation Run ${generationRunID} is not active.`, { expected_generation_run_id: generationRunID, current_generation_run_id: this.generationRunID });
-    if (this.generationState !== GENERATION_RUN_STATES.ACTIVE) throw error("generation_interrupted", "The Generation Run was interrupted by a reload. Finish it manually or cancel it before retrying.");
+    if (this.generationState !== GENERATION_RUN_STATES.ACTIVE) throw error("generation_interrupted", "The Generation Run was interrupted by a reload. Resume or cancel it before retrying.");
   }
 
   commitRevision(origin) {

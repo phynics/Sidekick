@@ -170,7 +170,7 @@ public enum GenerationRunError: Error, Equatable, Sendable {
         case .generationAlreadyActive: return "A Generation Run is already active."
         case .noActiveGeneration: return "There is no active Generation Run."
         case .wrongGenerationRun(let expected, let current): return "Generation Run \(expected) is not active. The active run is \(current)."
-        case .generationInterrupted: return "The Generation Run was interrupted by a reload. Finish it manually or cancel it before retrying."
+        case .generationInterrupted: return "The Generation Run was interrupted by a reload. Resume or cancel it before retrying."
         case .manualWriteLocked: return "Manual writes are locked while a Generation Run is active. Reads remain available."
         case .nothingToUndo: return "There is no completed Mutation to undo."
         case .nothingToRedo: return "There is no undone Mutation to redo."
@@ -268,6 +268,19 @@ public final class GenerationRunController: @unchecked Sendable {
     @discardableResult
     public func beginGeneration(expectedEncounterRevision: Int, expectedBriefRevision: Int, expectedConstraintsRevision: Int, contentBoundariesAcknowledged: Bool, intentSummary: String = "", generationRunID: String? = nil, origin: String = "webmcp") throws -> String {
         try begin(encounterID: draft.id, expectedEncounterRevision: expectedEncounterRevision, expectedBriefRevision: expectedBriefRevision, expectedConstraintsRevision: expectedConstraintsRevision, contentBoundariesAcknowledged: contentBoundariesAcknowledged, intentSummary: intentSummary, generationRunID: generationRunID, origin: origin)
+    }
+
+    @discardableResult
+    public func resume(encounterID: String, generationRunID: String, expectedEncounterRevision: Int, expectedConstraintsRevision: Int, origin: String = "webmcp") throws -> Int {
+        try checkEncounter(encounterID, expectedRevision: expectedEncounterRevision)
+        try checkConstraints(expectedConstraintsRevision)
+        guard let generation = draft.generation else { throw GenerationRunError.noActiveGeneration }
+        guard generation.id == generationRunID else { throw GenerationRunError.wrongGenerationRun(expected: generationRunID, current: generation.id) }
+        guard generation.state == GenerationRunLifecycleState.interrupted.rawValue else { throw SidekickDomainError("generation_not_interrupted", "Only an interrupted Generation Run can be resumed.") }
+        var next = draft
+        next.generation?.state = GenerationRunLifecycleState.active.rawValue
+        commit(next, description: "Resumed Generation Run", origin: origin)
+        return draft.revision
     }
 
     @discardableResult

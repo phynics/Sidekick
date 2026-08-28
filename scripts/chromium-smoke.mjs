@@ -334,10 +334,10 @@ try {
   const targeted = await evaluate(`(async () => {
     const snapshot = globalThis.sidekickDM.engine.snapshot;
     const identity = { ...(snapshot.encounter.packetV1?.identity ?? snapshot.encounter.packet_v1?.identity ?? {}), title: ${JSON.stringify(targetedTitle)} };
-    return globalThis.sidekickDM.webMCP.execute("sidekickdm_set_encounter_identity", {
+    return globalThis.sidekickDM.webMCP.execute("sidekickdm_apply_targeted_revision", {
       encounter_id: snapshot.encounter.id,
       expected_encounter_revision: snapshot.encounter.revision,
-      expected_constraints_revision: snapshot.constraintsRevision ?? snapshot.encounter.constraintsRevision ?? 0,
+      section: "encounter_identity",
       value: identity
     });
   })()`);

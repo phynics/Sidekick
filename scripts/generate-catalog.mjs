@@ -200,11 +200,16 @@ function abilityItems(record) {
 function strikeItems(record) {
   return (record.items ?? [])
     .filter((item) => ["melee", "ranged"].includes(item.type))
-    .map((item) => ({
-      damage: plain(item.system?.damage?.damage),
-      name: item.name,
-      traits: [...(item.system?.traits?.value ?? [])].map(String).sort()
-    }))
+    .map((item) => {
+      const attack = Number(item.system?.bonus?.value);
+      const damage = Object.values(item.system?.damageRolls ?? {}).map((roll) => plain(roll?.damage)).filter(Boolean).join(" + ");
+      return {
+        attack: Number.isInteger(attack) ? attack : null,
+        damage,
+        name: item.name,
+        traits: [...(item.system?.traits?.value ?? [])].map(String).sort()
+      };
+    })
     .filter((item) => item.name)
     .sort((a, b) => fixedOrder(a.name, b.name));
 }

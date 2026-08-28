@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { commitCustomCreature, CreatureGenerationError, forkExistingCreature, validateCustomCreature } from "../src/creature-generation.js";
 
 function entry() {
@@ -51,4 +53,18 @@ test("validation is read-only and commit blocks structural errors", () => {
   assert.ok(result.structuralErrors.length > 0);
   assert.deepEqual(invalid, before);
   assert.throws(() => commitCustomCreature(invalid), (error) => error.code === "creature_structural_errors");
+});
+
+test("bundled supported Creatures fork with complete Strike mechanics", () => {
+  const catalog = JSON.parse(readFileSync(fileURLToPath(new URL("../public/data/sidekickdm-catalog.v1.json", import.meta.url)), "utf8"));
+  const orc = catalog.entries.find(({ content_id }) => content_id === "creature/monster-core/orc-veteran/current");
+  const creature = forkExistingCreature(orc, { id: "cre_orc_veteran_fork" });
+  const validation = validateCustomCreature(creature);
+  assert.equal(validation.isStructurallyReady, true, JSON.stringify(validation.structuralErrors));
+  assert.ok(creature.strikes.length > 0);
+  for (const strike of creature.strikes) {
+    assert.ok(Number.isInteger(strike.attack?.value), `${strike.name} is missing its attack statistic`);
+    assert.ok(strike.damage.length > 0, `${strike.name} is missing damage`);
+    assert.ok(strike.damage.every(({ expression }) => expression.length > 0), `${strike.name} has an empty damage expression`);
+  }
 });

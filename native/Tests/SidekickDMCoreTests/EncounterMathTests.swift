@@ -156,8 +156,55 @@ final class EncounterMathTests: XCTestCase {
             "expected_revision": 0
         ], in: store)) { error in
             XCTAssertEqual((error as? SidekickDomainError)?.code, "invalid_packet_section")
+            XCTAssertEqual((error as? SidekickDomainError)?.details["field"], "premise")
         }
         XCTAssertEqual(store.draft, before)
+    }
+
+    func testWebMCPCompositionRequiresActiveRun() throws {
+        let store = EncounterStore(draft: EncounterDraft(id: "enc_no_run", constraintsRevision: 2))
+        let before = store.draft
+        XCTAssertThrowsError(try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_update_creative_brief", "encounter_id": "enc_no_run",
+            "expected_revision": 0, "expected_constraints_revision": 2,
+            "purpose": "Should not apply", "origin": "webmcp"
+        ], in: store)) { error in
+            XCTAssertEqual((error as? SidekickDomainError)?.code, "no_active_generation")
+        }
+        XCTAssertEqual(store.draft, before)
+    }
+
+    func testInterruptedGenerationRejectsMutationsUntilResume() throws {
+        let opening = EncounterDraft(id: "enc_resume", constraintsRevision: 2)
+        let openingJSON = String(data: try JSONEncoder().encode(opening), encoding: .utf8)!
+        var persisted = opening
+        persisted.revision = 1
+        persisted.generation = GenerationState(id: "run_resume", state: "active", openingDraftJSON: openingJSON)
+        let persistedJSON = String(data: try JSONEncoder().encode(persisted), encoding: .utf8)!
+        let store = EncounterStore()
+        try SidekickCommandExecutor.execute(["command": "sidekick_load_draft", "draft_json": persistedJSON], in: store)
+        XCTAssertEqual(store.draft.generation?.state, "interrupted")
+
+        XCTAssertThrowsError(try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_update_creative_brief", "encounter_id": "enc_resume", "generation_run_id": "run_resume",
+            "expected_revision": 1, "expected_constraints_revision": 2, "purpose": "Blocked", "origin": "webmcp"
+        ], in: store)) { error in
+            XCTAssertEqual((error as? SidekickDomainError)?.code, "generation_interrupted")
+        }
+        XCTAssertEqual(store.draft.revision, 1)
+
+        try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_resume_generation", "encounter_id": "enc_resume", "generation_run_id": "run_resume",
+            "expected_revision": 1, "expected_constraints_revision": 2, "origin": "webmcp"
+        ], in: store)
+        XCTAssertEqual(store.draft.generation?.state, "active")
+        XCTAssertEqual(store.draft.revision, 2)
+
+        try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_update_creative_brief", "encounter_id": "enc_resume", "generation_run_id": "run_resume",
+            "expected_revision": 2, "expected_constraints_revision": 2, "purpose": "Allowed", "origin": "webmcp"
+        ], in: store)
+        XCTAssertEqual(store.draft.brief.purpose, "Allowed")
     }
 
     func testEachSuccessfulMutationAdvancesRevisionOnce() throws {
@@ -258,9 +305,10 @@ final class EncounterMathTests: XCTestCase {
         XCTAssertEqual(runResult.reviewState, "needed")
 
         try SidekickCommandExecutor.execute([
-            "command": "sidekickdm_set_encounter_identity",
+            "command": "sidekickdm_apply_targeted_revision",
             "encounter_id": "enc_run",
             "expected_revision": 3,
+            "section": "encounter_identity",
             "value": ["objectVersion": 1, "title": "Targeted revision", "premise": "Cultists ring a drowned bell.", "objective": "Stop the ritual.", "stakes": "The shrine floods."],
             "origin": "webmcp"
         ], in: store)

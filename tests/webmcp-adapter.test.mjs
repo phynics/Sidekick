@@ -117,10 +117,10 @@ test("defines the version 1 read-only Sidekick surface", () => {
   assert.ok(toolDefinitions().some(({ name, readOnlyHint }) => name === "sidekickdm_begin_generation" && readOnlyHint === false));
   const requiredWrites = ["sidekickdm_upsert_npc_profile", "sidekickdm_add_existing_hazard"];
   for (const name of requiredWrites) assert.ok(toolDefinitions().some(definition => definition.name === name && definition.readOnlyHint === false), `Missing required WebMCP write tool ${name}`);
-  assert.deepEqual(toolDefinitions().find(({ name }) => name === "sidekickdm_upsert_npc_profile").inputSchema.required, ["encounter_id", "expected_encounter_revision", "expected_constraints_revision", "profile"]);
-  assert.deepEqual(toolDefinitions().find(({ name }) => name === "sidekickdm_add_existing_hazard").inputSchema.required, ["encounter_id", "expected_encounter_revision", "expected_constraints_revision", "content_id"]);
+  assert.deepEqual(toolDefinitions().find(({ name }) => name === "sidekickdm_upsert_npc_profile").inputSchema.required, ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision", "profile"]);
+  assert.deepEqual(toolDefinitions().find(({ name }) => name === "sidekickdm_add_existing_hazard").inputSchema.required, ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision", "content_id"]);
   const creatureUpdate = toolDefinitions().find(({ name }) => name === "sidekickdm_update_custom_creature");
-  assert.deepEqual(creatureUpdate.inputSchema.required, ["encounter_id", "expected_encounter_revision", "expected_constraints_revision", "creature"]);
+  assert.deepEqual(creatureUpdate.inputSchema.required, ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision", "creature"]);
   assert.ok(toolDefinitions().some(({ name, readOnlyHint }) => name === "sidekickdm_upsert_phase" && readOnlyHint === false));
   const targeted = toolDefinitions().find(({ name }) => name === "sidekickdm_apply_targeted_revision");
   assert.deepEqual(targeted.inputSchema.required, ["encounter_id", "expected_encounter_revision", "section", "value"]);
@@ -162,17 +162,60 @@ test("preflight uses native-equivalent complexity, adjustments, and active phase
   });
 });
 
-test("requires a Generation Run ID only when a run is active", async () => {
+test("requires an active Generation Run and explains its ID requirement", async () => {
   const commands = [];
   const engine = { snapshot: snapshot(), execute(command) { commands.push(command); return { ok: true, snapshot: this.snapshot }; } };
   const adapter = createWebMCPAdapter({ engine, catalog: new CatalogIndex(catalogFixture) });
-  const noRun = await adapter.execute("sidekickdm_add_existing_hazard", { encounter_id: "enc_test", expected_encounter_revision: 4, expected_constraints_revision: 2, content_id: "hazard/test/bell-snare/current" });
-  assert.equal(noRun.ok, true);
-  assert.equal(commands.length, 1);
+  const noRun = await adapter.execute("sidekickdm_add_existing_hazard", { encounter_id: "enc_test", generation_run_id: "run_missing", expected_encounter_revision: 4, expected_constraints_revision: 2, content_id: "hazard/test/bell-snare/current" });
+  assert.equal(noRun.ok, false);
+  assert.equal(noRun.error.code, "no_active_generation");
+  assert.equal(commands.length, 0);
 
   const active = await createWebMCPAdapter({ snapshot: snapshot({ encounter: { ...snapshot().encounter, generation: { id: "run_active", state: "active" } }, generationRunID: "run_active" }), catalog: new CatalogIndex(catalogFixture) }).execute("sidekickdm_add_existing_hazard", { encounter_id: "enc_test", expected_encounter_revision: 4, expected_constraints_revision: 2, content_id: "hazard/test/bell-snare/current" });
   assert.equal(active.ok, false);
   assert.equal(active.error.code, "invalid_request");
+  assert.equal(active.error.recovery, "Reuse the generation_run_id returned by sidekickdm_begin_generation.");
+  assert.match(toolDefinitions().find(({ name }) => name === "sidekickdm_add_existing_hazard").description, /generation_run_id returned by sidekickdm_begin_generation/);
+});
+
+test("rejects interrupted mutations until the agent explicitly resumes", async () => {
+  const commands = [];
+  const interrupted = snapshot({
+    encounter: { ...snapshot().encounter, generation: { id: "run_interrupted", state: "interrupted" } },
+    generationRunID: "run_interrupted"
+  });
+  const engine = { snapshot: interrupted, execute(command) { commands.push(command); return { ok: true, snapshot: this.snapshot }; } };
+  const adapter = createWebMCPAdapter({ engine, catalog: new CatalogIndex(catalogFixture) });
+  const rejected = await adapter.execute("sidekickdm_update_creative_brief", {
+    encounter_id: "enc_test", generation_run_id: "run_interrupted", expected_encounter_revision: 4,
+    expected_constraints_revision: 2, purpose: "Should not apply"
+  });
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.error.code, "generation_interrupted");
+  assert.equal(commands.length, 0);
+  assert.ok(toolDefinitions().some(({ name }) => name === "sidekickdm_resume_generation"));
+});
+
+test("publishes packet schemas and defaults optional packet arrays", async () => {
+  const commands = [];
+  const active = snapshot({
+    encounter: { ...snapshot().encounter, generation: { id: "run_packet", state: "active" } },
+    generationRunID: "run_packet"
+  });
+  const engine = { snapshot: active, execute(command) { commands.push(command); return { ok: true, snapshot: this.snapshot }; } };
+  const adapter = createWebMCPAdapter({ engine, catalog: new CatalogIndex(catalogFixture) });
+  const result = await adapter.execute("sidekickdm_set_running_guidance", {
+    encounter_id: "enc_test", generation_run_id: "run_packet", expected_encounter_revision: 4, expected_constraints_revision: 2,
+    value: {
+      participant_roles: "Hold the doorway.", opening_tactics: "Form a shield wall.", ongoing_tactics: "Fall back.",
+      coordination_conflict: "Protect the bell.", triggers_reinforcements: "None.", morale_summary: "Retreat at half strength."
+    }
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(commands[0].value.adjudicationIssues, []);
+  const schema = toolDefinitions().find(({ name }) => name === "sidekickdm_set_running_guidance").inputSchema.properties.value;
+  assert.equal(schema.additionalProperties, false);
+  assert.deepEqual(schema.properties.adjudication_issues.default, []);
 });
 
 test("read projections preserve missing native fields instead of inventing domain values", async () => {
@@ -190,6 +233,7 @@ test("read projections preserve missing native fields instead of inventing domai
   assert.equal(summary.data.hazards[0].complexity, null);
   const capabilities = await adapter.execute("sidekickdm_get_capabilities");
   assert.deepEqual(capabilities.data.catalog, { fixture_version: null, party_level_focus: [] });
+  assert.deepEqual(capabilities.data.active_encounter, { encounter_id: "enc_test", title: "", encounter_revision: 4, brief_revision: 3, constraints_revision: 2 });
 });
 
 test("returns compact version 1 projections with current revisions", async () => {
@@ -214,7 +258,8 @@ test("returns compact version 1 projections with current revisions", async () =>
         alternative_resolutions: true,
         map_attachments: true
       },
-      catalog: { fixture_version: 1, party_level_focus: [] }
+      catalog: { fixture_version: 1, party_level_focus: [] },
+      active_encounter: { encounter_id: "enc_test", title: "The Bell Beneath Blackwater", encounter_revision: 4, brief_revision: 3, constraints_revision: 2 }
     }
   });
   const brief = await adapter.execute("sidekickdm_get_encounter_brief");
@@ -366,10 +411,11 @@ test("keeps every documented WebMCP tool registered and critical schemas contrac
   const names = new Set(definitions.map(definition => definition.name));
   for (const name of required) assert.ok(names.has(name), `Missing documented WebMCP tool ${name}`);
   const schema = name => definitions.find(definition => definition.name === name)?.inputSchema;
-  assert.deepEqual(schema("sidekickdm_cancel_generation").required, ["encounter_id", "expected_encounter_revision"]);
+  assert.deepEqual(schema("sidekickdm_cancel_generation").required, ["encounter_id", "generation_run_id", "expected_encounter_revision"]);
   assert.deepEqual(schema("sidekickdm_apply_targeted_revision").required, ["encounter_id", "expected_encounter_revision", "section", "value"]);
-  assert.deepEqual(schema("sidekickdm_update_creature").required, ["encounter_id", "expected_encounter_revision", "expected_constraints_revision", "creature"]);
+  assert.deepEqual(schema("sidekickdm_update_creature").required, ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision", "creature"]);
   assert.deepEqual(schema("sidekickdm_get_component").required, ["encounter_id", "component_id"]);
   assert.deepEqual(schema("sidekickdm_get_encounter_packet").required, ["encounter_id"]);
   assert.equal(schema("sidekickdm_set_generation_assumptions").properties.generation_run_id.type, "string");
+  assert.deepEqual(schema("sidekickdm_resume_generation").required, ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision"]);
 });

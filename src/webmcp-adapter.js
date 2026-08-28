@@ -108,13 +108,33 @@ const catalogEntryInput = Object.freeze({
 
 const revisionProperties = Object.freeze({
   encounter_id: { type: "string", minLength: 1 },
-  generation_run_id: { type: "string", minLength: 1 },
+  generation_run_id: { type: "string", minLength: 1, description: "The ID returned by sidekickdm_begin_generation. It is required for every Generation Run mutation." },
   expected_encounter_revision: { type: "integer", minimum: 0 },
   expected_brief_revision: { type: "integer", minimum: 0 },
   expected_constraints_revision: { type: "integer", minimum: 0 }
 });
 
-const generationMutationRequired = (fields) => ["encounter_id", "expected_encounter_revision", "expected_constraints_revision", ...fields];
+const packetSectionSchemas = Object.freeze({
+  encounter_identity: { type: "object", properties: { title: { type: "string" }, premise: { type: "string" }, objective: { type: "string" }, stakes: { type: "string" } }, required: ["title", "premise", "objective", "stakes"], additionalProperties: false },
+  setup: { type: "object", properties: { trigger: { type: "string" }, battlefield_description: { type: "string" }, starting_positions: { type: "string" }, awareness_state: { type: "string" }, immediate_features: { type: "array", items: { type: "string" } }, read_aloud: { type: ["string", "null"], default: null } }, required: ["trigger", "battlefield_description", "starting_positions", "awareness_state", "immediate_features"], additionalProperties: false },
+  battlefield_guidance: { type: "object", properties: { dimensions: { type: "string", default: "" }, zones: { type: "array", items: { type: "string" }, default: [] }, elevations: { type: "array", items: { type: "string" }, default: [] }, cover: { type: "array", items: { type: "string" }, default: [] }, concealment: { type: "array", items: { type: "string" }, default: [] }, difficult_terrain: { type: "array", items: { type: "string" }, default: [] }, entry_points: { type: "array", items: { type: "string" }, default: [] }, escape_routes: { type: "array", items: { type: "string" }, default: [] }, interactive_objects: { type: "array", items: { type: "string" }, default: [] }, hazard_placement: { type: "array", items: { type: "string" }, default: [] }, recommended_distances: { type: "array", items: { type: "string" }, default: [] }, map_generation_prompt: { type: ["string", "null"], default: null }, attachment_id: { type: ["string", "null"], default: null } }, additionalProperties: false },
+  running_guidance: { type: "object", properties: { participant_roles: { type: "string" }, opening_tactics: { type: "string" }, ongoing_tactics: { type: "string" }, coordination_conflict: { type: "string" }, triggers_reinforcements: { type: "string" }, morale_summary: { type: "string" }, adjudication_issues: { type: "array", items: { type: "string" }, default: [] } }, required: ["participant_roles", "opening_tactics", "ongoing_tactics", "coordination_conflict", "triggers_reinforcements", "morale_summary"], additionalProperties: false },
+  cohesion: { type: "object", properties: { theme: { type: "string", default: "" }, participant_presence: { type: "string" }, relationships: { type: "string" }, hazard_terrain_fit: { type: "string" } }, required: ["participant_presence", "relationships", "hazard_terrain_fit"], additionalProperties: false },
+  information_visibility: { type: "object", properties: { immediately_apparent: { type: "array", items: { type: "string" }, default: [] }, discoverable: { type: "array", items: { type: "string" }, default: [] }, gm_secret: { type: "array", items: { type: "string" }, default: [] } }, additionalProperties: false },
+  outcomes: { type: "object", properties: { victory: { type: "string" }, partial_success: { type: ["string", "null"], default: null }, failure: { type: ["string", "null"], default: null }, party_retreat: { type: ["string", "null"], default: null }, enemy_surrender: { type: ["string", "null"], default: null }, enemy_escape: { type: ["string", "null"], default: null }, long_term_consequence: { type: ["string", "null"], default: null } }, required: ["victory"], additionalProperties: false }
+});
+
+const packetSectionDefaults = Object.freeze({
+  encounter_identity: {},
+  setup: { read_aloud: null },
+  battlefield_guidance: { dimensions: "", zones: [], elevations: [], cover: [], concealment: [], difficult_terrain: [], entry_points: [], escape_routes: [], interactive_objects: [], hazard_placement: [], recommended_distances: [], map_generation_prompt: null, attachment_id: null },
+  running_guidance: { adjudication_issues: [] },
+  cohesion: { theme: "" },
+  information_visibility: { immediately_apparent: [], discoverable: [], gm_secret: [] },
+  outcomes: { partial_success: null, failure: null, party_retreat: null, enemy_surrender: null, enemy_escape: null, long_term_consequence: null }
+});
+
+const generationMutationRequired = (fields) => ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision", ...fields];
 
 const cancelGenerationProperties = Object.freeze({
   encounter_id: { type: "string", minLength: 1 },
@@ -200,27 +220,28 @@ const READ_TOOL_DEFINITIONS = Object.freeze([
 
 const WRITE_TOOL_DEFINITIONS = Object.freeze([
   writeDefinition(`${TOOL_PREFIX}begin_generation`, "Begin a revision-checked Generation Run after acknowledging GM-owned Content Boundaries.", { ...revisionProperties, content_boundaries_acknowledged: { type: "boolean" }, intent_summary: { type: "string" } }, ["encounter_id", "expected_encounter_revision", "expected_brief_revision", "expected_constraints_revision", "content_boundaries_acknowledged"]),
-  writeDefinition(`${TOOL_PREFIX}add_existing_participant_group`, "Add one complete supported Catalog Creature during a Generation Run.", { ...revisionProperties, content_id: { type: "string", minLength: 1 }, quantity: { type: "integer", minimum: 1 }, adjustment: { type: "string", enum: ["weak", "normal", "elite"] }, faction: { type: "string" }, participation: freeformObject, encounter_role: { type: "string" }, narrative_tier: { type: "string" }, starting_area: { type: "string" }, shared_tactics: { type: "string" }, morale: { type: "string" } }, generationMutationRequired(["content_id"])),
+  writeDefinition(`${TOOL_PREFIX}add_existing_participant_group`, "Add one complete supported Catalog Creature during an active Generation Run. Pass the generation_run_id returned by sidekickdm_begin_generation.", { ...revisionProperties, content_id: { type: "string", minLength: 1 }, quantity: { type: "integer", minimum: 1 }, adjustment: { type: "string", enum: ["weak", "normal", "elite"] }, faction: { type: "string" }, participation: freeformObject, encounter_role: { type: "string" }, narrative_tier: { type: "string" }, starting_area: { type: "string" }, shared_tactics: { type: "string" }, morale: { type: "string" } }, generationMutationRequired(["content_id"])),
   definition(`${TOOL_PREFIX}fork_existing_creature`, "Create a detached Forked Creature draft from a complete supported Catalog Creature while preserving existing spellcasting blocks.", { type: "object", properties: { content_id: { type: "string", minLength: 1 }, id: { type: "string" } }, required: ["content_id"], additionalProperties: false }, { untrusted: true }),
   definition(`${TOOL_PREFIX}validate_custom_creature`, "Validate an Original or Forked Creature without mutating the Encounter.", { type: "object", properties: { creature: freeformObject }, required: ["creature"], additionalProperties: false }, { untrusted: true }),
   writeDefinition(`${TOOL_PREFIX}create_custom_creature`, "Validate, embed, and place an Original or Forked Creature atomically.", { ...revisionProperties, creature: freeformObject, quantity: { type: "integer", minimum: 1 }, starting_area: { type: "string" } }, generationMutationRequired(["creature"])),
   writeDefinition(`${TOOL_PREFIX}update_creature`, "Validate and replace an encounter-embedded Original or Forked Creature and update its Participant Group projection atomically.", { ...revisionProperties, creature: freeformObject }, generationMutationRequired(["creature"])),
   writeDefinition(`${TOOL_PREFIX}update_custom_creature`, "Backward-compatible alias for update_creature.", { ...revisionProperties, creature: freeformObject }, generationMutationRequired(["creature"])),
   writeDefinition(`${TOOL_PREFIX}upsert_npc_profile`, "Create or update one validated NPC Profile associated with an encounter Participant Group.", { ...revisionProperties, profile: freeformObject }, generationMutationRequired(["profile"])),
-  writeDefinition(`${TOOL_PREFIX}add_existing_hazard`, "Add one complete supported Catalog Hazard with participation, placement, and optional phase assignment during a Generation Run.", { ...revisionProperties, content_id: { type: "string", minLength: 1 }, id: { type: "string", minLength: 1 }, participation_mode: { type: "string", enum: ["mandatory", "avoidable", "conditional", "reinforcement"] }, participation_condition: { type: "string" }, placement: { type: "string" }, phase_id: { type: "string", minLength: 1 }, phase_ids: { type: "array", items: { type: "string", minLength: 1 } } }, generationMutationRequired(["content_id"])),
+  writeDefinition(`${TOOL_PREFIX}add_existing_hazard`, "Add one complete supported Catalog Hazard during an active Generation Run. Pass the generation_run_id returned by sidekickdm_begin_generation.", { ...revisionProperties, content_id: { type: "string", minLength: 1 }, id: { type: "string", minLength: 1 }, participation_mode: { type: "string", enum: ["mandatory", "avoidable", "conditional", "reinforcement"] }, participation_condition: { type: "string" }, placement: { type: "string" }, phase_id: { type: "string", minLength: 1 }, phase_ids: { type: "array", items: { type: "string", minLength: 1 } } }, generationMutationRequired(["content_id"])),
   definition(`${TOOL_PREFIX}validate_simple_hazard`, "Validate a custom Simple Hazard without mutating the Encounter.", { type: "object", properties: { hazard: freeformObject }, required: ["hazard"], additionalProperties: false }, { untrusted: true }),
   writeDefinition(`${TOOL_PREFIX}create_simple_hazard`, "Validate, embed, and place a custom Simple Hazard atomically.", { ...revisionProperties, hazard: freeformObject, participation_mode: { type: "string", enum: ["mandatory", "avoidable", "conditional", "reinforcement"] }, participation_condition: { type: "string" }, placement: { type: "string" } }, generationMutationRequired(["hazard"])),
   writeDefinition(`${TOOL_PREFIX}update_hazard`, "Update an encounter-embedded custom Simple Hazard and its participation or placement.", { ...revisionProperties, hazard: freeformObject, participation_mode: { type: "string", enum: ["mandatory", "avoidable", "conditional", "reinforcement"] }, participation_condition: { type: "string" }, placement: { type: "string" } }, generationMutationRequired(["hazard"])),
   writeDefinition(`${TOOL_PREFIX}remove_component`, "Remove an encounter placement without deleting reusable library records.", { ...revisionProperties, component_id: { type: "string", minLength: 1 } }, generationMutationRequired(["component_id"])),
   writeDefinition(`${TOOL_PREFIX}upsert_phase`, "Validate and add or replace one structured Encounter Phase.", { ...revisionProperties, phase: freeformObject }, generationMutationRequired(["phase"])),
-  ...["encounter_identity", "setup", "battlefield_guidance", "running_guidance", "cohesion", "information_visibility", "outcomes"].map(section => writeDefinition(`${TOOL_PREFIX}set_${section}`, `Set the semantic Encounter Packet ${section.replaceAll("_", " ")} section.`, { ...revisionProperties, value: freeformObject }, generationMutationRequired(["value"]))),
+  ...Object.entries(packetSectionSchemas).map(([section, schema]) => writeDefinition(`${TOOL_PREFIX}set_${section}`, `Set the semantic Encounter Packet ${section.replaceAll("_", " ")} section during an active Generation Run. Pass the generation_run_id returned by sidekickdm_begin_generation.`, { ...revisionProperties, value: schema }, generationMutationRequired(["value"]))),
   writeDefinition(`${TOOL_PREFIX}finish_generation`, "Finish a structurally complete Generation Run and preserve Design Warnings for review.", { ...revisionProperties, completion_note: { type: "string" } }, generationMutationRequired([])),
-  writeDefinition(`${TOOL_PREFIX}cancel_generation`, "Cancel a Generation Run and restore its opening Encounter state.", cancelGenerationProperties, ["encounter_id", "expected_encounter_revision"]),
+  writeDefinition(`${TOOL_PREFIX}resume_generation`, "Explicitly resume a Generation Run that reload marked interrupted.", revisionProperties, ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision"]),
+  writeDefinition(`${TOOL_PREFIX}cancel_generation`, "Cancel a Generation Run and restore its opening Encounter state.", cancelGenerationProperties, ["encounter_id", "generation_run_id", "expected_encounter_revision"]),
   writeDefinition(`${TOOL_PREFIX}apply_targeted_revision`, "Apply one named agent-authored revision after a Generation Run; undo restores the finished run first, then the opening Encounter.", targetedRevisionProperties, ["encounter_id", "expected_encounter_revision", "section", "value"]),
   writeDefinition(`${TOOL_PREFIX}set_generation_assumptions`, "Record concise assumptions for omitted optional Brief fields during a Generation Run.", assumptionsProperties, generationMutationRequired(["assumptions"])),
-  writeDefinition(`${TOOL_PREFIX}update_creative_brief`, "Update agent-editable creative Brief fields without changing Party Snapshot or Content Boundaries.", creativeBriefProperties, ["encounter_id", "expected_encounter_revision", "expected_constraints_revision"]),
-  writeDefinition(`${TOOL_PREFIX}set_reward_guidance`, "Set optional narrative reward guidance in the Encounter Packet.", { ...revisionProperties, value: { type: ["string", "null"] } }, ["encounter_id", "expected_encounter_revision", "expected_constraints_revision", "value"]),
-  writeDefinition(`${TOOL_PREFIX}set_alternative_resolutions`, "Set optional structured Alternative Resolutions in the Encounter Packet.", { ...revisionProperties, value: { type: "array", items: freeformObject } }, ["encounter_id", "expected_encounter_revision", "expected_constraints_revision", "value"]),
+  writeDefinition(`${TOOL_PREFIX}update_creative_brief`, "Update agent-editable creative Brief fields during an active Generation Run without changing Party Snapshot or Content Boundaries.", creativeBriefProperties, generationMutationRequired([])),
+  writeDefinition(`${TOOL_PREFIX}set_reward_guidance`, "Set optional narrative reward guidance in the Encounter Packet during an active Generation Run.", { ...revisionProperties, value: { type: ["string", "null"] } }, generationMutationRequired(["value"])),
+  writeDefinition(`${TOOL_PREFIX}set_alternative_resolutions`, "Set optional structured Alternative Resolutions in the Encounter Packet during an active Generation Run.", { ...revisionProperties, value: { type: "array", items: freeformObject } }, generationMutationRequired(["value"])),
   writeDefinition(`${TOOL_PREFIX}undo`, "Undo the most recent authored mutation or complete finished Generation Run.", { encounter_id: revisionProperties.encounter_id, expected_encounter_revision: revisionProperties.expected_encounter_revision }, ["encounter_id", "expected_encounter_revision"]),
   writeDefinition(`${TOOL_PREFIX}redo`, "Redo the most recently undone mutation.", { encounter_id: revisionProperties.encounter_id, expected_encounter_revision: revisionProperties.expected_encounter_revision }, ["encounter_id", "expected_encounter_revision"])
 ]);
@@ -235,6 +256,8 @@ const RECOVERY = Object.freeze({
   stale_brief_revision: "Read the Encounter Brief again and retry with its current revision.",
   stale_constraints: "Read the GM-owned constraints again before retrying.",
   wrong_generation_run: "Read the active Generation Run ID again before retrying.",
+  no_active_generation: "Begin a Generation Run before using composition or packet mutation tools.",
+  generation_interrupted: "Call sidekickdm_resume_generation with the current revisions and Generation Run ID, or cancel the run.",
   manual_write_locked: "Use the active Generation Run tools or finish or cancel the run first.",
   structural_errors: "Read Readiness, resolve every Structural Error, and retry finish.",
   invalid_request: "Check the tool input against its schema."
@@ -308,7 +331,8 @@ function unwrap(raw) {
     encounterRevision: number(firstDefined(snapshot.encounterRevision, snapshot.encounter_revision, draft?.revision), 0),
     briefRevision: number(firstDefined(snapshot.briefRevision, snapshot.brief_revision, draft?.briefRevision, draft?.brief_revision), 0),
     constraintsRevision: number(firstDefined(snapshot.constraintsRevision, snapshot.constraints_revision, draft?.constraintsRevision, draft?.constraints_revision), 0),
-    generationRunID: firstDefined(snapshot.generationRunID, snapshot.generation_run_id, generation?.id) ?? null
+    generationRunID: firstDefined(snapshot.generationRunID, snapshot.generation_run_id, generation?.id) ?? null,
+    generationState: firstDefined(snapshot.generationState, snapshot.generation_state, generation?.state) ?? null
   };
 }
 
@@ -338,7 +362,9 @@ function errorPayload(error) {
   const rawCode = text(source?.code) || "application_error";
   const code = rawCode === "invalid_creature" || rawCode === "creature_structural_errors" ? "invalid_creature_stat_block" : rawCode;
   const message = text(source?.message) || "Sidekick DM could not complete that read.";
-  return domainError(code, message, source?.details);
+  const payload = domainError(code, message, source?.details);
+  if (source?.recovery) payload.recovery = text(source.recovery);
+  return payload;
 }
 
 function requireDraft(state) {
@@ -726,8 +752,9 @@ function projectSummary(snapshot, draft, state) {
   };
 }
 
-function capabilities(catalog) {
+function capabilities(catalog, state) {
   const fixture = catalog?.fixture ?? {};
+  const draft = requireDraft(state);
   return {
     product: "Sidekick DM",
     protocol_version: PROTOCOL_VERSION,
@@ -743,6 +770,13 @@ function capabilities(catalog) {
     catalog: {
       fixture_version: optionalNumber(firstDefined(fixture.fixture_version, fixture.fixtureVersion)),
       party_level_focus: array(fixture.party_level_focus ?? fixture.partyLevelFocus)
+    },
+    active_encounter: {
+      encounter_id: text(draft.id),
+      title: text(draft.title),
+      encounter_revision: state.encounterRevision,
+      brief_revision: state.briefRevision,
+      constraints_revision: state.constraintsRevision
     }
   };
 }
@@ -803,14 +837,15 @@ function validateSchemaValue(value, schema, path) {
   if (Array.isArray(value) && schema.items) value.forEach((item, index) => validateSchemaValue(item, schema.items, `${path}[${index}]`));
   if (schemaTypeMatches(value, "object") && schema.properties) {
     if (schema.additionalProperties === false) for (const key of Object.keys(value)) if (!Object.hasOwn(schema.properties, key)) throw Object.assign(new Error(`${path}.${key} is not supported.`), { code: "invalid_request", details: { field: `${path}.${key}` } });
-    for (const required of schema.required ?? []) if (!Object.hasOwn(value, required)) throw Object.assign(new Error(`${path}.${required} is required.`), { code: "invalid_request", details: { field: required } });
+    for (const required of schema.required ?? []) if (!Object.hasOwn(value, required)) throw Object.assign(new Error(`${path}.${required} is required.`), { code: "invalid_request", details: { field: required }, ...(required === "generation_run_id" ? { recovery: "Reuse the generation_run_id returned by sidekickdm_begin_generation." } : {}) });
     for (const [key, child] of Object.entries(schema.properties)) if (Object.hasOwn(value, key)) validateSchemaValue(value[key], child, `${path}.${key}`);
   }
 }
 
 const MUTATION_NAMES = new Set(TOOL_DEFINITIONS.filter(definition => !definition.readOnlyHint).map(definition => definition.name));
 const AGENT_CONSTRAINT_MUTATIONS = new Set([...MUTATION_NAMES].filter(name => !new Set([`${TOOL_PREFIX}cancel_generation`, `${TOOL_PREFIX}apply_targeted_revision`, `${TOOL_PREFIX}undo`, `${TOOL_PREFIX}redo`]).has(name)));
-const CONDITIONAL_RUN_MUTATIONS = new Set([...MUTATION_NAMES].filter(name => !new Set([`${TOOL_PREFIX}begin_generation`, `${TOOL_PREFIX}apply_targeted_revision`, `${TOOL_PREFIX}undo`, `${TOOL_PREFIX}redo`]).has(name)));
+const GENERATION_MUTATIONS = new Set([...MUTATION_NAMES].filter(name => !new Set([`${TOOL_PREFIX}begin_generation`, `${TOOL_PREFIX}resume_generation`, `${TOOL_PREFIX}cancel_generation`, `${TOOL_PREFIX}apply_targeted_revision`, `${TOOL_PREFIX}undo`, `${TOOL_PREFIX}redo`]).has(name)));
+const RUN_BOUND_MUTATIONS = new Set([...GENERATION_MUTATIONS, `${TOOL_PREFIX}resume_generation`, `${TOOL_PREFIX}cancel_generation`]);
 
 function validateToolInput(name, input) {
   const definition = TOOL_DEFINITIONS.find(item => item.name === name);
@@ -825,10 +860,18 @@ function validateMutationPreconditions(name, input, state) {
   checkEncounter(state, input);
   if (!Number.isInteger(input.expected_encounter_revision)) throw Object.assign(new Error("expected_encounter_revision must be an integer."), { code: "invalid_request" });
   if (AGENT_CONSTRAINT_MUTATIONS.has(name) && !Object.hasOwn(input, "expected_constraints_revision")) throw Object.assign(new Error("This mutation requires expected_constraints_revision."), { code: "invalid_request" });
-  if (state.generationRunID && CONDITIONAL_RUN_MUTATIONS.has(name)) {
-    if (!Object.hasOwn(input, "generation_run_id")) throw Object.assign(new Error("An active Generation Run requires generation_run_id."), { code: "invalid_request" });
+  if (GENERATION_MUTATIONS.has(name) && !state.generationRunID) throw Object.assign(new Error("This mutation requires an active Generation Run."), { code: "no_active_generation" });
+  if (RUN_BOUND_MUTATIONS.has(name)) {
+    if (!state.generationRunID) throw Object.assign(new Error("There is no active Generation Run."), { code: "no_active_generation" });
+    if (!Object.hasOwn(input, "generation_run_id")) throw Object.assign(new Error("An active Generation Run requires generation_run_id."), { code: "invalid_request", recovery: "Reuse the generation_run_id returned by sidekickdm_begin_generation." });
     if (input.generation_run_id !== state.generationRunID) throw Object.assign(new Error("That Generation Run is no longer active."), { code: "wrong_generation_run", details: { current_generation_run_id: state.generationRunID } });
   }
+  if (state.generationState === "interrupted" && GENERATION_MUTATIONS.has(name)) throw Object.assign(new Error("The Generation Run was interrupted by a reload."), { code: "generation_interrupted" });
+  if (name === `${TOOL_PREFIX}resume_generation` && state.generationState !== "interrupted") throw Object.assign(new Error("Only an interrupted Generation Run can be resumed."), { code: "generation_not_interrupted" });
+}
+
+function packetValue(section, value) {
+  return keysToCamel({ ...clone(packetSectionDefaults[section]), ...clone(value) });
 }
 
 function resolveContext(options) {
@@ -897,7 +940,7 @@ export function createWebMCPAdapter(options = {}) {
       validateMutationPreconditions(name, input, state);
       switch (name) {
         case `${TOOL_PREFIX}get_capabilities`:
-          return envelope(state, capabilities(catalog));
+          return envelope(state, capabilities(catalog, state));
         case `${TOOL_PREFIX}get_encounter_summary`:
           checkEncounter(state, input);
           return envelope(state, projectSummary(state.snapshot, requireDraft(state), state));
@@ -931,6 +974,8 @@ export function createWebMCPAdapter(options = {}) {
           return envelope(state, projectPreflight(state.snapshot, requireDraft(state), input));
         case `${TOOL_PREFIX}begin_generation`:
           return await executeMutation(mutationCommand(name, input), next => ({ generation_run_id: next.generationRunID, opening_revision: state.encounterRevision, readiness: projectReadiness(next.snapshot, requireDraft(next)) }));
+        case `${TOOL_PREFIX}resume_generation`:
+          return await executeMutation(mutationCommand(name, input), next => ({ generation_run_id: next.generationRunID, state: next.generationState }));
         case `${TOOL_PREFIX}add_existing_participant_group`: {
           const entry = catalogEntry(catalog, text(input.content_id));
           return await executeMutation(mutationCommand(name, input, { catalog_entry: catalogEntryCommand(catalog, entry), name: entry.name, level: entry.level }));
@@ -993,7 +1038,7 @@ export function createWebMCPAdapter(options = {}) {
         case `${TOOL_PREFIX}set_cohesion`:
         case `${TOOL_PREFIX}set_information_visibility`:
         case `${TOOL_PREFIX}set_outcomes`:
-          return await executeMutation(mutationCommand(name, { ...input, value: keysToCamel(input.value) }));
+          return await executeMutation(mutationCommand(name, { ...input, value: packetValue(name.slice(`${TOOL_PREFIX}set_`.length), input.value) }));
         case `${TOOL_PREFIX}set_reward_guidance`:
           return await executeMutation(mutationCommand(name, { ...input, value: input.value }));
         case `${TOOL_PREFIX}set_alternative_resolutions`:

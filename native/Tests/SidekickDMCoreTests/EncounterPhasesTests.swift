@@ -95,7 +95,7 @@ final class EncounterPhasesTests: XCTestCase {
             "command": "sidekickdm_upsert_phase",
             "phase": invalidPayload,
             "expected_revision": 1,
-            "origin": "webmcp"
+            "origin": "gm"
         ], in: store)) { error in
             XCTAssertEqual((error as? SidekickDomainError)?.code, "unknown_participant_reference")
         }

@@ -1,0 +1,222 @@
+{
+  "fixture_version": 1,
+  "ruleset": "pf2-remaster",
+  "status": "verified-against-published-rules",
+  "sources": [
+    {
+      "title": "GM Core",
+      "tables": ["10-1", "10-2"],
+      "url": "https://2e.aonprd.com/Rules.aspx?ID=2716&Redirected=1"
+    },
+    {
+      "title": "GM Core",
+      "tables": ["10-14", "hazard format"],
+      "url": "https://2e.aonprd.com/Rules.aspx?ID=2665&Redirected=1"
+    },
+    {
+      "title": "GM Core",
+      "tables": ["2-5", "2-6", "2-7", "2-8", "2-9", "2-10", "2-11"],
+      "url": "https://2e.aonprd.com/Rules.aspx?ID=2874&Redirected=1"
+    },
+    {
+      "title": "GM Core",
+      "tables": ["2-13", "2-14", "2-15", "2-16"],
+      "url": "https://2e.aonprd.com/Rules.aspx?ID=2864"
+    }
+  ],
+  "threat_budgets": [
+    {"threat": "trivial", "base_budget": 40, "per_character_adjustment": 10, "published_maximum": true},
+    {"threat": "low", "base_budget": 60, "per_character_adjustment": 20},
+    {"threat": "moderate", "base_budget": 80, "per_character_adjustment": 20},
+    {"threat": "severe", "base_budget": 120, "per_character_adjustment": 30},
+    {"threat": "extreme", "base_budget": 160, "per_character_adjustment": 40}
+  ],
+  "party_size_adjustments": {
+    "formula": "base_budget + (party_size - 4) * per_character_adjustment",
+    "base_xp_award_uses_four_character_encounter": true,
+    "party_sizes": [1, 2, 3, 4, 5, 6, 7, 8],
+    "budgets": {
+      "trivial": [10, 20, 30, 40, 50, 60, 70, 80],
+      "low": [0, 20, 40, 60, 80, 100, 120, 140],
+      "moderate": [20, 40, 60, 80, 100, 120, 140, 160],
+      "severe": [30, 60, 90, 120, 150, 180, 210, 240],
+      "extreme": [40, 80, 120, 160, 200, 240, 280, 320]
+    },
+    "note": "The published trivial values are ceilings (40 or less, 10 or less per character); this fixture uses the maximum for deterministic calculations."
+  },
+  "creature_xp_by_relative_level": [
+    {"relative_level": -4, "xp": 10}, {"relative_level": -3, "xp": 15},
+    {"relative_level": -2, "xp": 20}, {"relative_level": -1, "xp": 30},
+    {"relative_level": 0, "xp": 40}, {"relative_level": 1, "xp": 60},
+    {"relative_level": 2, "xp": 80}, {"relative_level": 3, "xp": 120},
+    {"relative_level": 4, "xp": 160}
+  ],
+  "hazard_xp_by_relative_level": {
+    "simple": [
+      {"relative_level": -4, "xp": 2}, {"relative_level": -3, "xp": 3},
+      {"relative_level": -2, "xp": 4}, {"relative_level": -1, "xp": 6},
+      {"relative_level": 0, "xp": 8}, {"relative_level": 1, "xp": 12},
+      {"relative_level": 2, "xp": 16}, {"relative_level": 3, "xp": 24},
+      {"relative_level": 4, "xp": 30}
+    ],
+    "complex": [
+      {"relative_level": -4, "xp": 10}, {"relative_level": -3, "xp": 15},
+      {"relative_level": -2, "xp": 20}, {"relative_level": -1, "xp": 30},
+      {"relative_level": 0, "xp": 40}, {"relative_level": 1, "xp": 60},
+      {"relative_level": 2, "xp": 80}, {"relative_level": 3, "xp": 120},
+      {"relative_level": 4, "xp": 150}
+    ]
+  },
+  "builder_benchmarks": {
+    "level_range": [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    "armor_class": {
+      "-1": {"extreme": 18, "high": 15, "moderate": 14, "low": 12},
+      "0": {"extreme": 19, "high": 16, "moderate": 15, "low": 13},
+      "1": {"extreme": 19, "high": 16, "moderate": 15, "low": 13},
+      "2": {"extreme": 21, "high": 18, "moderate": 17, "low": 15},
+      "3": {"extreme": 22, "high": 19, "moderate": 18, "low": 16},
+      "4": {"extreme": 24, "high": 21, "moderate": 20, "low": 18},
+      "5": {"extreme": 25, "high": 22, "moderate": 21, "low": 19},
+      "6": {"extreme": 27, "high": 24, "moderate": 23, "low": 21},
+      "7": {"extreme": 28, "high": 25, "moderate": 24, "low": 22},
+      "8": {"extreme": 30, "high": 27, "moderate": 26, "low": 24},
+      "9": {"extreme": 31, "high": 28, "moderate": 27, "low": 25},
+      "10": {"extreme": 33, "high": 30, "moderate": 29, "low": 27},
+      "11": {"extreme": 34, "high": 31, "moderate": 30, "low": 28},
+      "12": {"extreme": 36, "high": 33, "moderate": 32, "low": 30},
+      "13": {"extreme": 37, "high": 34, "moderate": 33, "low": 31}
+    },
+    "saving_throws": {
+      "-1": {"extreme": 9, "high": 8, "moderate": 5, "low": 2, "terrible": 0},
+      "0": {"extreme": 10, "high": 9, "moderate": 6, "low": 3, "terrible": 1},
+      "1": {"extreme": 11, "high": 10, "moderate": 7, "low": 4, "terrible": 2},
+      "2": {"extreme": 12, "high": 11, "moderate": 8, "low": 5, "terrible": 3},
+      "3": {"extreme": 14, "high": 12, "moderate": 9, "low": 6, "terrible": 4},
+      "4": {"extreme": 15, "high": 14, "moderate": 11, "low": 8, "terrible": 6},
+      "5": {"extreme": 17, "high": 15, "moderate": 12, "low": 9, "terrible": 7},
+      "6": {"extreme": 18, "high": 17, "moderate": 14, "low": 11, "terrible": 8},
+      "7": {"extreme": 20, "high": 18, "moderate": 15, "low": 12, "terrible": 10},
+      "8": {"extreme": 21, "high": 19, "moderate": 16, "low": 13, "terrible": 11},
+      "9": {"extreme": 23, "high": 21, "moderate": 18, "low": 15, "terrible": 12},
+      "10": {"extreme": 24, "high": 22, "moderate": 19, "low": 16, "terrible": 14},
+      "11": {"extreme": 26, "high": 24, "moderate": 21, "low": 18, "terrible": 15},
+      "12": {"extreme": 27, "high": 25, "moderate": 22, "low": 19, "terrible": 16},
+      "13": {"extreme": 29, "high": 26, "moderate": 23, "low": 20, "terrible": 18}
+    },
+    "hit_points": {
+      "-1": {"high": [9, 9], "moderate": [7, 8], "low": [5, 6]},
+      "0": {"high": [17, 20], "moderate": [14, 16], "low": [11, 13]},
+      "1": {"high": [24, 26], "moderate": [19, 21], "low": [14, 16]},
+      "2": {"high": [36, 40], "moderate": [28, 32], "low": [21, 25]},
+      "3": {"high": [53, 59], "moderate": [42, 48], "low": [31, 37]},
+      "4": {"high": [72, 78], "moderate": [57, 63], "low": [42, 48]},
+      "5": {"high": [91, 97], "moderate": [72, 78], "low": [53, 59]},
+      "6": {"high": [115, 123], "moderate": [91, 99], "low": [67, 75]},
+      "7": {"high": [140, 148], "moderate": [111, 119], "low": [82, 90]},
+      "8": {"high": [165, 173], "moderate": [131, 139], "low": [97, 105]},
+      "9": {"high": [190, 198], "moderate": [151, 159], "low": [112, 120]},
+      "10": {"high": [215, 223], "moderate": [171, 179], "low": [127, 135]},
+      "11": {"high": [240, 248], "moderate": [191, 199], "low": [142, 150]},
+      "12": {"high": [265, 273], "moderate": [211, 219], "low": [157, 165]},
+      "13": {"high": [290, 298], "moderate": [231, 239], "low": [172, 180]}
+    },
+    "strike_attack_bonus": {
+      "-1": {"extreme": 10, "high": 8, "moderate": 6, "low": 4}, "0": {"extreme": 10, "high": 8, "moderate": 6, "low": 4},
+      "1": {"extreme": 11, "high": 9, "moderate": 7, "low": 5}, "2": {"extreme": 13, "high": 11, "moderate": 9, "low": 7},
+      "3": {"extreme": 14, "high": 12, "moderate": 10, "low": 8}, "4": {"extreme": 16, "high": 14, "moderate": 12, "low": 9},
+      "5": {"extreme": 17, "high": 15, "moderate": 13, "low": 11}, "6": {"extreme": 19, "high": 17, "moderate": 15, "low": 12},
+      "7": {"extreme": 20, "high": 18, "moderate": 16, "low": 13}, "8": {"extreme": 22, "high": 20, "moderate": 18, "low": 15},
+      "9": {"extreme": 23, "high": 21, "moderate": 19, "low": 16}, "10": {"extreme": 25, "high": 23, "moderate": 21, "low": 17},
+      "11": {"extreme": 27, "high": 24, "moderate": 22, "low": 19}, "12": {"extreme": 28, "high": 26, "moderate": 24, "low": 20},
+      "13": {"extreme": 29, "high": 27, "moderate": 25, "low": 21}
+    },
+    "spell_dc_and_attack": {
+      "-1": {"extreme": [19, 11], "high": [16, 8], "moderate": [13, 5]}, "0": {"extreme": [19, 11], "high": [16, 8], "moderate": [13, 5]},
+      "1": {"extreme": [20, 12], "high": [17, 9], "moderate": [14, 6]}, "2": {"extreme": [22, 14], "high": [18, 10], "moderate": [15, 7]},
+      "3": {"extreme": [23, 15], "high": [20, 12], "moderate": [17, 9]}, "4": {"extreme": [25, 17], "high": [21, 13], "moderate": [18, 10]},
+      "5": {"extreme": [26, 18], "high": [22, 14], "moderate": [19, 11]}, "6": {"extreme": [27, 19], "high": [24, 16], "moderate": [21, 13]},
+      "7": {"extreme": [29, 21], "high": [25, 17], "moderate": [22, 14]}, "8": {"extreme": [30, 22], "high": [26, 18], "moderate": [23, 15]},
+      "9": {"extreme": [32, 24], "high": [28, 20], "moderate": [25, 17]}, "10": {"extreme": [33, 25], "high": [29, 21], "moderate": [26, 18]},
+      "11": {"extreme": [34, 26], "high": [30, 22], "moderate": [27, 19]}, "12": {"extreme": [36, 28], "high": [32, 24], "moderate": [29, 21]},
+      "13": {"extreme": [37, 29], "high": [33, 25], "moderate": [30, 22]}
+    },
+    "strike_damage": {
+      "-1": {"extreme": "1d6+1 (4)", "high": "1d4+1 (3)", "moderate": "1d4 (3)", "low": "1d4 (2)"},
+      "0": {"extreme": "1d6+3 (6)", "high": "1d6+2 (5)", "moderate": "1d4+2 (4)", "low": "1d4+1 (3)"},
+      "1": {"extreme": "1d8+4 (8)", "high": "1d6+3 (6)", "moderate": "1d6+2 (5)", "low": "1d4+2 (4)"},
+      "2": {"extreme": "1d12+4 (11)", "high": "1d10+4 (9)", "moderate": "1d8+4 (8)", "low": "1d6+3 (6)"},
+      "3": {"extreme": "1d12+8 (15)", "high": "1d10+6 (12)", "moderate": "1d8+6 (10)", "low": "1d6+5 (8)"},
+      "4": {"extreme": "2d10+7 (18)", "high": "2d8+5 (14)", "moderate": "2d6+5 (12)", "low": "2d4+4 (9)"},
+      "5": {"extreme": "2d12+7 (20)", "high": "2d8+7 (16)", "moderate": "2d6+6 (13)", "low": "2d4+6 (11)"},
+      "6": {"extreme": "2d12+10 (23)", "high": "2d8+9 (18)", "moderate": "2d6+8 (15)", "low": "2d4+7 (12)"},
+      "7": {"extreme": "2d12+12 (25)", "high": "2d10+9 (20)", "moderate": "2d8+8 (17)", "low": "2d6+6 (13)"},
+      "8": {"extreme": "2d12+15 (28)", "high": "2d10+11 (22)", "moderate": "2d8+9 (18)", "low": "2d6+8 (15)"},
+      "9": {"extreme": "2d12+17 (30)", "high": "2d10+13 (24)", "moderate": "2d8+11 (20)", "low": "2d6+9 (16)"},
+      "10": {"extreme": "2d12+20 (33)", "high": "2d12+13 (26)", "moderate": "2d10+11 (22)", "low": "2d6+10 (17)"},
+      "11": {"extreme": "2d12+22 (35)", "high": "2d12+15 (28)", "moderate": "2d10+12 (23)", "low": "2d8+10 (19)"},
+      "12": {"extreme": "3d12+19 (38)", "high": "3d10+14 (30)", "moderate": "3d8+12 (25)", "low": "3d6+10 (20)"},
+      "13": {"extreme": "3d12+21 (40)", "high": "3d10+16 (32)", "moderate": "3d8+14 (27)", "low": "3d6+11 (21)"}
+    },
+    "hazard_benchmarks": {
+      "source": {"title": "GM Core", "section": "Building Hazards", "url": "https://2e.aonprd.com/Rules.aspx?ID=2864"},
+      "stealth_and_disable_dc": {
+        "-1": {"extreme": 18, "high": 15, "low": [12, 11]}, "0": {"extreme": 19, "high": 16, "low": [13, 12]},
+        "1": {"extreme": 20, "high": 17, "low": [14, 13]}, "2": {"extreme": 21, "high": 18, "low": [15, 14]},
+        "3": {"extreme": 23, "high": 20, "low": [17, 15]}, "4": {"extreme": 25, "high": 22, "low": [18, 17]},
+        "5": {"extreme": 26, "high": 23, "low": [20, 18]}, "6": {"extreme": 28, "high": 25, "low": [21, 19]},
+        "7": {"extreme": 30, "high": 27, "low": [23, 21]}, "8": {"extreme": 31, "high": 28, "low": [24, 22]},
+        "9": {"extreme": 33, "high": 30, "low": [26, 23]}, "10": {"extreme": 35, "high": 32, "low": [27, 25]},
+        "11": {"extreme": 36, "high": 33, "low": [29, 26]}, "12": {"extreme": 38, "high": 35, "low": [30, 27]},
+        "13": {"extreme": 40, "high": 37, "low": [32, 29]}
+      },
+      "minimum_proficiency": {
+        "0_or_lower": {"high": "untrained", "moderate": "untrained"},
+        "1_to_4": {"high": "trained (expert for Perception)", "moderate": "trained"},
+        "5_to_8": {"high": "expert", "moderate": "trained"},
+        "9_to_18": {"high": "master", "moderate": "expert"},
+        "19_or_higher": {"high": "legendary", "moderate": "master"}
+      },
+      "defenses": {
+        "-1": {"eac": 18, "hac": 15, "lac": 12, "extreme_save": 9, "high_save": 8, "low_save": 2, "hardness": [2, 4], "hp": [11, 13]},
+        "0": {"eac": 19, "hac": 16, "lac": 13, "extreme_save": 10, "high_save": 9, "low_save": 3, "hardness": [3, 5], "hp": [15, 17]},
+        "1": {"eac": 19, "hac": 16, "lac": 13, "extreme_save": 11, "high_save": 10, "low_save": 4, "hardness": [5, 7], "hp": [23, 25]},
+        "2": {"eac": 21, "hac": 18, "lac": 15, "extreme_save": 12, "high_save": 11, "low_save": 5, "hardness": [7, 9], "hp": [30, 34]},
+        "3": {"eac": 22, "hac": 19, "lac": 16, "extreme_save": 14, "high_save": 12, "low_save": 6, "hardness": [10, 12], "hp": [42, 46]},
+        "4": {"eac": 24, "hac": 21, "lac": 18, "extreme_save": 15, "high_save": 14, "low_save": 8, "hardness": [11, 13], "hp": [46, 50]},
+        "5": {"eac": 25, "hac": 22, "lac": 19, "extreme_save": 17, "high_save": 15, "low_save": 9, "hardness": [12, 14], "hp": [50, 54]},
+        "6": {"eac": 27, "hac": 24, "lac": 21, "extreme_save": 18, "high_save": 17, "low_save": 11, "hardness": [13, 15], "hp": [54, 58]},
+        "7": {"eac": 28, "hac": 25, "lac": 22, "extreme_save": 20, "high_save": 18, "low_save": 12, "hardness": [14, 16], "hp": [58, 62]},
+        "8": {"eac": 30, "hac": 27, "lac": 24, "extreme_save": 21, "high_save": 19, "low_save": 13, "hardness": [15, 17], "hp": [62, 66]},
+        "9": {"eac": 31, "hac": 28, "lac": 25, "extreme_save": 23, "high_save": 21, "low_save": 15, "hardness": [16, 18], "hp": [66, 70]},
+        "10": {"eac": 33, "hac": 30, "lac": 27, "extreme_save": 24, "high_save": 22, "low_save": 16, "hardness": [17, 19], "hp": [70, 74]},
+        "11": {"eac": 34, "hac": 31, "lac": 28, "extreme_save": 26, "high_save": 24, "low_save": 18, "hardness": [19, 21], "hp": [78, 82]},
+        "12": {"eac": 36, "hac": 33, "lac": 30, "extreme_save": 27, "high_save": 25, "low_save": 19, "hardness": [20, 22], "hp": [82, 86]},
+        "13": {"eac": 37, "hac": 34, "lac": 31, "extreme_save": 29, "high_save": 26, "low_save": 20, "hardness": [21, 23], "hp": [86, 90]}
+      },
+      "offense": {
+        "-1": {"simple_attack": 10, "complex_attack": 8, "simple_damage": "2d4+1 (6)", "complex_damage": "1d4+1 (3)", "extreme_dc": 19, "hard_dc": 16},
+        "0": {"simple_attack": 11, "complex_attack": 8, "simple_damage": "2d6+3 (10)", "complex_damage": "1d6+2 (5)", "extreme_dc": 19, "hard_dc": 16},
+        "1": {"simple_attack": 13, "complex_attack": 9, "simple_damage": "2d6+5 (12)", "complex_damage": "1d6+3 (6)", "extreme_dc": 20, "hard_dc": 17},
+        "2": {"simple_attack": 14, "complex_attack": 11, "simple_damage": "2d10+7 (18)", "complex_damage": "1d10+4 (9)", "extreme_dc": 22, "hard_dc": 18},
+        "3": {"simple_attack": 16, "complex_attack": 12, "simple_damage": "2d10+13 (24)", "complex_damage": "1d10+6 (12)", "extreme_dc": 23, "hard_dc": 20},
+        "4": {"simple_attack": 17, "complex_attack": 14, "simple_damage": "4d8+10 (28)", "complex_damage": "2d8+5 (14)", "extreme_dc": 25, "hard_dc": 21},
+        "5": {"simple_attack": 19, "complex_attack": 15, "simple_damage": "4d8+14 (32)", "complex_damage": "2d8+7 (16)", "extreme_dc": 26, "hard_dc": 22},
+        "6": {"simple_attack": 20, "complex_attack": 17, "simple_damage": "4d8+18 (36)", "complex_damage": "2d8+9 (18)", "extreme_dc": 27, "hard_dc": 24},
+        "7": {"simple_attack": 22, "complex_attack": 18, "simple_damage": "4d10+18 (40)", "complex_damage": "2d10+9 (20)", "extreme_dc": 29, "hard_dc": 25},
+        "8": {"simple_attack": 23, "complex_attack": 20, "simple_damage": "4d10+22 (44)", "complex_damage": "2d10+11 (22)", "extreme_dc": 30, "hard_dc": 26},
+        "9": {"simple_attack": 25, "complex_attack": 21, "simple_damage": "4d10+26 (48)", "complex_damage": "2d10+13 (24)", "extreme_dc": 32, "hard_dc": 28},
+        "10": {"simple_attack": 26, "complex_attack": 23, "simple_damage": "4d12+26 (52)", "complex_damage": "2d12+13 (26)", "extreme_dc": 33, "hard_dc": 29},
+        "11": {"simple_attack": 28, "complex_attack": 24, "simple_damage": "4d12+30 (56)", "complex_damage": "2d12+15 (28)", "extreme_dc": 34, "hard_dc": 30},
+        "12": {"simple_attack": 29, "complex_attack": 26, "simple_damage": "6d10+27 (60)", "complex_damage": "3d10+14 (30)", "extreme_dc": 36, "hard_dc": 32},
+        "13": {"simple_attack": 31, "complex_attack": 27, "simple_damage": "6d10+31 (64)", "complex_damage": "3d10+16 (32)", "extreme_dc": 37, "hard_dc": 33}
+      }
+    }
+  },
+  "invariants": [
+    {"id": "party-size-budget", "rule": "budget = base_budget + (party_size - 4) * per_character_adjustment"},
+    {"id": "party-size-xp", "rule": "the base encounter XP award is unchanged by party size"},
+    {"id": "hazard-below-minus-four", "rule": "hazards more than four levels below the party award 0 XP"},
+    {"id": "complex-hazard-xp", "rule": "a complex hazard uses the explicit hazard table; at relative level +4 the authoritative value is 150 XP (not creature XP 160)"},
+    {"id": "simple-hazard-xp", "rule": "a simple hazard uses the published simple-hazard XP value"}
+  ]
+}

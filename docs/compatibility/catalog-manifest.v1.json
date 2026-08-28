@@ -1,0 +1,16 @@
+{
+  "manifest_version": 1,
+  "manifest_id": "sidekick-dm-p0-catalog-audit",
+  "status": "audit-only",
+  "generator": {"name": "Sidekick GenerateSidekickDMCatalog", "version": "not-yet-implemented"},
+  "source": {"system": "foundryvtt-pf2e", "revision": "4cbdaa37d6c33e9519561bae2c59a23e0288cbce", "revision_date": "2025-05-31T10:49:04-07:00"},
+  "counts": {"monster_core": 492, "npc_core": 270, "gm_core_hazards": 32, "p0_total": 794},
+  "source_files": [
+    {"pack": "pathfinder-monster-core", "license_basis": "ORC", "remaster": true, "count": 492, "level_min": -1, "level_max": 25},
+    {"pack": "pathfinder-npc-core", "license_basis": "ORC", "remaster": true, "count": 270, "level_min": -1, "level_max": 19},
+    {"pack": "hazards", "publication": "Pathfinder GM Core", "license_basis": "ORC", "remaster": true, "count": 32, "level_min": 0, "level_max": 23}
+  ],
+  "provenance_fields_required": ["source_title", "source_page_if_known", "edition", "upstream.system", "upstream.pack", "upstream.identifier", "source_sha256", "license_basis", "nested_items[].publication", "notices", "diagnostics"],
+  "determinism_contract": {"encoding": "UTF-8 JSON, sorted keys, stable array order, trailing newline", "generated_at": "must be supplied by build, never inferred from wall clock for fixture comparison", "artifacts": ["sidekickdm-catalog.v1.json", "catalog-manifest.v1.json", "NOTICE.txt"]},
+  "known_unknowns": ["source pages are absent from local Foundry records", "role and environment facets require curation", "HTML/enrichment normalization requires a generator", "no executable Sidekick catalog scaffold currently exists"]
+}

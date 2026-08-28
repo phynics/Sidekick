@@ -1,0 +1,83 @@
+{
+  "fixture_version": 1,
+  "catalog_id": "sidekick-dm-p0",
+  "status": "audit-only",
+  "coverage_claim": "levels, spellcasting presence, and hazard shapes only; no role/environment coverage claim",
+  "policy": {
+    "default_edition": "current-remaster",
+    "default_completeness": "complete",
+    "default_support": true,
+    "runtime_dependency": "none",
+    "redistribute_art": false
+  },
+  "source_revision": "4cbdaa37d6c33e9519561bae2c59a23e0288cbce",
+  "sources": [
+    {
+      "source_id": "foundry-pf2e:pathfinder-monster-core",
+      "title": "Pathfinder Monster Core",
+      "pack": "packs/pathfinder-monster-core",
+      "license_basis": "ORC",
+      "remaster": true,
+      "nested_license_policy": "review items[].system.publication independently; do not inherit parent license",
+      "record_count": 492,
+      "level_range": [-1, 25],
+      "spellcasting_count": 215,
+      "non_spellcasting_count": 277
+    },
+    {
+      "source_id": "foundry-pf2e:pathfinder-npc-core",
+      "title": "Pathfinder NPC Core",
+      "pack": "packs/pathfinder-npc-core",
+      "license_basis": "ORC",
+      "remaster": true,
+      "nested_license_policy": "review items[].system.publication independently; do not inherit parent license",
+      "record_count": 270,
+      "level_range": [-1, 19],
+      "spellcasting_count": 70,
+      "non_spellcasting_count": 200
+    },
+    {
+      "source_id": "foundry-pf2e:pathfinder-gm-core-hazards",
+      "title": "Pathfinder GM Core",
+      "pack": "packs/hazards",
+      "license_basis": "ORC",
+      "remaster": true,
+      "nested_license_policy": "review items[].system.publication independently; do not inherit parent license",
+      "record_count": 32,
+      "level_range": [0, 23],
+      "simple_count": 22,
+      "complex_count": 10
+    }
+  ],
+  "coverage_targets": {
+    "party_levels": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "component_levels": [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    "hazard_traits": ["trap", "environmental", "haunt"],
+    "hazard_complexities": ["simple", "complex"],
+    "roadmap_vocabulary": ["soldier"],
+    "role_vocabulary": ["brute", "defender", "skirmisher", "sniper", "controller", "support", "ambusher", "leader", "solo boss"],
+    "environment_facets": ["aquatic", "arctic", "desert", "forest", "mountain", "urban", "underground"],
+    "supported_roadmaps": [],
+    "supported_roles": [],
+    "supported_environments": []
+  },
+  "coverage_evidence": [
+    {"facet": "levels", "status": "verified", "note": "The three selected packs cover every target component level; Monster Core and NPC Core cover -1, and all three cover 0 through 13."},
+    {"facet": "spellcasting", "status": "verified", "note": "Spellcasting entries are present in both creature packs; counts are recorded above."},
+    {"facet": "hazards", "status": "verified", "note": "GM Core hazards contain simple and complex records with trap, environmental, and haunt traits."},
+    {"facet": "environment", "status": "blocked", "note": "P0 makes no environment-coverage claim. The design vocabulary is retained for future filters, but no assignments are published until each assignment has review evidence."},
+    {"facet": "roles", "status": "blocked", "note": "P0 makes no Encounter Role coverage claim. The design vocabulary is retained, but supported_roles remains empty until each assignment has review evidence."},
+    {"facet": "completeness", "status": "generator-required", "note": "Counts prove source inventory only; normalized completeness still requires the Sidekick generator and diagnostics."}
+  ],
+  "representative_entries": [
+    {"content_id": "creature/monster-core/goblin-warrior/current", "source_file": "packs/pathfinder-monster-core/goblin-warrior.json", "name": "Goblin Warrior", "level": -1, "source_sha256": "9f0204d98f439e13ff0ad4d031ed3808cd7740315a6cd6b2455ddf6600bc88db"},
+    {"content_id": "creature/monster-core/aapoph-granitescale/current", "source_file": "packs/pathfinder-monster-core/aapoph-granitescale.json", "name": "Aapoph Granitescale", "level": 6, "source_sha256": "2bf005ec5a8fd0bcd8b171dcf7b9a3b0bd0f54a1d1fdf1b73a204a418004d589"},
+    {"content_id": "creature/npc-core/dwarf-smith/current", "source_file": "packs/pathfinder-npc-core/ancestry-npcs/dwarf/dwarf-smith.json", "name": "Dwarf Smith", "level": 0, "source_sha256": "36c0eb72daca5d3264fb2a2397dbddc46f505e0235b7f7da63cce1062fd1d7b7"},
+    {"content_id": "hazard/gm-core/electric-latch-rune/current", "source_file": "packs/hazards/electric-latch-rune.json", "name": "Electric Latch Rune", "level": 3, "complexity": "simple", "source_sha256": "d62280cc1300d9a6dc30f20af424348cc90f4ce7770e2591ca5e2ba53d543690"},
+    {"content_id": "hazard/gm-core/quicksand/current", "source_file": "packs/hazards/quicksand.json", "name": "Quicksand", "level": 3, "complexity": "complex", "source_sha256": "ee56de4ac57cff87d62fe1f8a245fa2b16d472fdf4afcb15567b618f75c685d0"}
+  ],
+  "excluded_sources": [
+    {"pack": "packs/hazards", "records": 19, "reason": "legacy OGL publications (Core Rulebook, Bestiary, Bestiary 2, Gamemastery Guide, Blog); retain as future legacy/compatibility scope"},
+    {"pack": "packs/hazards", "records": 3, "reason": "Guns & Gears is ORC/remaster but outside the coherent P0 core publication set; retain as a P1 extension"}
+  ]
+}

@@ -401,13 +401,13 @@ export function renderEncounterPrintProjection(projectionOrInput = {}, options =
     `<div class="print-subsection"><h3>Party and threat</h3>${renderPairs({ party: summary.party, threatTarget: summary.threatTarget })}</div>`,
     `<div class="print-subsection"><h3>Cohesion</h3>${renderPairs(summary.cohesion)}</div>`,
     `<div class="print-subsection"><h3>Budget and readiness</h3>${budget}${readiness}</div>`,
-    `<div class="print-subsection"><h3>Content Boundaries · GM-owned</h3>${renderPairs(summary.boundaries)}</div>`
+    `<div class="print-subsection"><h3>Content Boundaries · DM-owned</h3>${renderPairs(summary.boundaries)}</div>`
   ].join("");
   const setupBody = [
     renderField("Trigger", setupValue.trigger), renderField("Battlefield description", setupValue.battlefieldDescription), renderField("Starting positions", setupValue.startingPositions),
     renderField("Awareness / detection", setupValue.awarenessState), renderField("Immediate features", setupValue.immediateFeatures), renderField("Read-aloud", setupValue.readAloud),
     `<div class="print-subsection"><h3>Battlefield guidance</h3>${renderPairs(battlefield)}</div>`,
-    `<div class="print-subsection"><h3>Information visibility</h3>${renderField("Immediately apparent", information.immediatelyApparent)}${renderField("Discoverable", information.discoverable)}${renderField("GM secret", information.gmSecret)}</div>`
+    `<div class="print-subsection"><h3>Information visibility</h3>${renderField("Immediately apparent", information.immediatelyApparent)}${renderField("Discoverable", information.discoverable)}${renderField("DM secret", information.gmSecret)}</div>`
   ].join("");
   const outcomeBody = [
     renderField("Victory", outcomes.victory), renderField("Partial success", outcomes.partialSuccess), renderField("Failure", outcomes.failure), renderField("Party retreat", outcomes.partyRetreat),

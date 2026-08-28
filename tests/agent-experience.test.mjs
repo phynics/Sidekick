@@ -22,7 +22,7 @@ test("published packet tool names receive specific activity summaries", () => {
   assert.equal(summarizeAgentCommand({ command: "sidekickdm_update_creative_brief" }).description, "Refined the premise, place, and tone");
   assert.equal(summarizeAgentCommand({ command: "sidekickdm_set_encounter_identity" }).description, "Wrote the objective and stakes");
   assert.equal(summarizeAgentCommand({ command: "sidekickdm_set_battlefield_guidance" }).description, "Added battlefield features");
-  assert.equal(summarizeAgentCommand({ command: "sidekickdm_set_information_visibility" }).description, "Added clues and GM information");
+  assert.equal(summarizeAgentCommand({ command: "sidekickdm_set_information_visibility" }).description, "Added clues and DM information");
 });
 
 test("the shelf stop action crosses the generation boundary as an agent cancellation", () => {

@@ -45,8 +45,8 @@ export function summarizeAgentCommand(command = {}, draft = {}, group = null, bu
     sidekickdm_set_battlefield_guidance: "Added battlefield features",
     sidekickdm_set_running_guidance: "Added tactics and morale",
     sidekickdm_set_cohesion: "Connected the opposition to the scene",
-    sidekickdm_set_information: "Added clues and GM information",
-    sidekickdm_set_information_visibility: "Added clues and GM information",
+    sidekickdm_set_information: "Added clues and DM information",
+    sidekickdm_set_information_visibility: "Added clues and DM information",
     sidekickdm_set_outcomes: "Added encounter outcomes",
     sidekickdm_finish_generation: "Encounter ready to review",
     sidekickdm_cancel_generation: "Stopped encounter generation"

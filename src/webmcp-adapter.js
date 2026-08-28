@@ -250,7 +250,7 @@ const READ_TOOL_DEFINITIONS = Object.freeze([
   definition(`${TOOL_PREFIX}get_readiness`, "Read structural errors, design warnings, missing packet sections, and review state.", noInput),
   definition(`${TOOL_PREFIX}search_catalog`, "Search the independent Sidekick DM Catalog by text and structured filters.", catalogSearchInput, { untrusted: true }),
   definition(`${TOOL_PREFIX}get_catalog_entry`, "Read one full game-facing Catalog Entry and its Catalog Provenance.", catalogEntryInput, { untrusted: true }),
-  definition(`${TOOL_PREFIX}get_encounter_packet`, "Read the GM-facing Encounter Packet projection, optionally limited to named sections.", packetInput, { untrusted: true }),
+  definition(`${TOOL_PREFIX}get_encounter_packet`, "Read the DM-facing Encounter Packet projection, optionally limited to named sections.", packetInput, { untrusted: true }),
   definition(`${TOOL_PREFIX}get_component`, "Read one Encounter component by ID without exposing engine serialization.", componentInput, { untrusted: true }),
   definition(`${TOOL_PREFIX}get_creature_benchmarks`, "Read the official-style Creature Builder benchmark bands for a level.", creatureBenchmarkInput),
   definition(`${TOOL_PREFIX}get_hazard_benchmarks`, "Read the official-style Hazard Builder benchmark bands for a level and complexity.", hazardBenchmarkInput),
@@ -261,9 +261,9 @@ const READ_TOOL_DEFINITIONS = Object.freeze([
 
 const WRITE_TOOL_DEFINITIONS = Object.freeze([
   writeDefinition(`${TOOL_PREFIX}create_encounter`, "Create a new Encounter Draft with its Party Snapshot and Threat Target before beginning generation.", createEncounterProperties, ["title", "effective_level", "size", "kind"], { destructive: true }),
-  writeDefinition(`${TOOL_PREFIX}set_party_snapshot`, "Set the GM-confirmed effective party level and size before beginning generation.", partySnapshotProperties, ["encounter_id", "expected_encounter_revision", "effective_level", "size"]),
-  writeDefinition(`${TOOL_PREFIX}set_threat_target`, "Set the GM-confirmed Threat Target before beginning generation.", threatTargetProperties, ["encounter_id", "expected_encounter_revision", "kind"]),
-  writeDefinition(`${TOOL_PREFIX}begin_generation`, "Begin a revision-checked Generation Run after acknowledging GM-owned Content Boundaries.", { ...revisionProperties, content_boundaries_acknowledged: { type: "boolean" }, intent_summary: { type: "string" } }, ["encounter_id", "expected_encounter_revision", "expected_brief_revision", "expected_constraints_revision", "content_boundaries_acknowledged"]),
+  writeDefinition(`${TOOL_PREFIX}set_party_snapshot`, "Set the DM-confirmed effective party level and size before beginning generation.", partySnapshotProperties, ["encounter_id", "expected_encounter_revision", "effective_level", "size"]),
+  writeDefinition(`${TOOL_PREFIX}set_threat_target`, "Set the DM-confirmed Threat Target before beginning generation.", threatTargetProperties, ["encounter_id", "expected_encounter_revision", "kind"]),
+  writeDefinition(`${TOOL_PREFIX}begin_generation`, "Begin a revision-checked Generation Run after acknowledging DM-owned Content Boundaries.", { ...revisionProperties, content_boundaries_acknowledged: { type: "boolean" }, intent_summary: { type: "string" } }, ["encounter_id", "expected_encounter_revision", "expected_brief_revision", "expected_constraints_revision", "content_boundaries_acknowledged"]),
   writeDefinition(`${TOOL_PREFIX}add_existing_participant_group`, "Add one complete supported Catalog Creature during an active Generation Run. Pass the generation_run_id returned by sidekickdm_begin_generation.", { ...revisionProperties, content_id: { type: "string", minLength: 1 }, quantity: { type: "integer", minimum: 1 }, adjustment: { type: "string", enum: ["weak", "normal", "elite"] }, faction: { type: "string" }, participation: freeformObject, encounter_role: { type: "string" }, narrative_tier: { type: "string" }, starting_area: { type: "string" }, shared_tactics: { type: "string" }, morale: { type: "string" } }, generationMutationRequired(["content_id"])),
   definition(`${TOOL_PREFIX}fork_existing_creature`, "Create a detached Forked Creature draft from a complete supported Catalog Creature while preserving existing spellcasting blocks.", { type: "object", properties: { content_id: { type: "string", minLength: 1 }, id: { type: "string" } }, required: ["content_id"], additionalProperties: false }, { untrusted: true }),
   definition(`${TOOL_PREFIX}validate_custom_creature`, "Validate an Original or Forked Creature without mutating the Encounter.", { type: "object", properties: { creature: freeformObject }, required: ["creature"], additionalProperties: false }, { untrusted: true }),
@@ -308,7 +308,7 @@ const RECOVERY = Object.freeze({
   catalog_unavailable: "Wait for the Catalog to finish loading, then retry the read.",
   stale_revision: "Read the Encounter again and retry with its current revision.",
   stale_brief_revision: "Read the Encounter Brief again and retry with its current revision.",
-  stale_constraints: "Read the GM-owned constraints again before retrying.",
+  stale_constraints: "Read the DM-owned constraints again before retrying.",
   wrong_generation_run: "Read the active Generation Run ID again before retrying.",
   no_active_generation: "Begin a Generation Run before using composition or packet mutation tools.",
   generation_interrupted: "Call sidekickdm_resume_generation with the current revisions and Generation Run ID, or cancel the run.",
@@ -504,7 +504,7 @@ function projectChecklist(draft) {
     ["purpose", brief.creative.purpose, false, true, "Clarifies what the encounter is meant to accomplish."],
     ["premise", brief.creative.premise, false, true, "Gives the encounter a concrete situation for composition and packet writing."],
     ["environment", brief.creative.environment, false, true, "Helps choose fitting creatures, hazards, and terrain."],
-    ["content_boundaries", brief.content_boundaries, false, false, "Keeps authored material within the GM's stated limits."]
+    ["content_boundaries", brief.content_boundaries, false, false, "Keeps authored material within the DM's stated limits."]
   ].map(([field, value, required, agentEditable, impact]) => ({
     field,
     status: fieldMissing(value) ? "missing" : "complete",

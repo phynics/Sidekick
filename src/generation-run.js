@@ -117,7 +117,7 @@ export class GenerationRunController {
     this.checkEncounter(encounterID, integer(value(input, "expectedEncounterRevision", "expected_encounter_revision"), NaN));
     this.checkBrief(integer(value(input, "expectedBriefRevision", "expected_brief_revision"), NaN));
     this.checkConstraints(integer(value(input, "expectedConstraintsRevision", "expected_constraints_revision"), NaN));
-    if (value(input, "contentBoundariesAcknowledged", "content_boundaries_acknowledged") !== true) throw error("content_constraint_not_acknowledged", "The agent must acknowledge the GM's Content Boundaries before generation can begin.");
+    if (value(input, "contentBoundariesAcknowledged", "content_boundaries_acknowledged") !== true) throw error("content_constraint_not_acknowledged", "The agent must acknowledge the DM's Content Boundaries before generation can begin.");
     if (this.generation) throw error("generation_already_active", "A Generation Run is already active.");
 
     const opening = clone(this.draft);

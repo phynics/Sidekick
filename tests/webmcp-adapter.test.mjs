@@ -31,6 +31,7 @@ function snapshot(overrides = {}) {
   return {
     protocolVersion: 1,
     encounterRevision: 4,
+    briefRevision: 3,
     constraintsRevision: 2,
     budget: {
       targetThreat: "severe",
@@ -56,6 +57,7 @@ function snapshot(overrides = {}) {
     encounter: {
       id: "enc_test",
       revision: 4,
+      briefRevision: 3,
       constraintsRevision: 2,
       title: "The Bell Beneath Blackwater",
       brief: {
@@ -77,7 +79,8 @@ function snapshot(overrides = {}) {
 }
 
 test("defines the version 1 read-only Sidekick surface", () => {
-  assert.deepEqual(toolDefinitions().map(({ name }) => name), [
+  const reads = toolDefinitions().filter(definition => definition.readOnlyHint);
+  assert.deepEqual(reads.slice(0, 8).map(({ name }) => name), [
     "sidekickdm_get_capabilities",
     "sidekickdm_get_encounter_summary",
     "sidekickdm_get_encounter_brief",
@@ -87,10 +90,12 @@ test("defines the version 1 read-only Sidekick surface", () => {
     "sidekickdm_search_catalog",
     "sidekickdm_get_catalog_entry"
   ]);
-  for (const definition of toolDefinitions()) {
+  for (const definition of reads.slice(0, 8)) {
     assert.equal(definition.readOnlyHint, true);
     assert.equal(definition.annotations.readOnlyHint, true);
   }
+  assert.ok(toolDefinitions().some(({ name, readOnlyHint }) => name === "sidekickdm_begin_generation" && readOnlyHint === false));
+  assert.ok(toolDefinitions().some(({ name, readOnlyHint }) => name === "sidekickdm_upsert_phase" && readOnlyHint === false));
   assert.equal(toolDefinitions().find(({ name }) => name.endsWith("get_encounter_brief")).untrustedContentHint, true);
   assert.equal(toolDefinitions().find(({ name }) => name.endsWith("get_budget")).untrustedContentHint, false);
 });
@@ -102,6 +107,7 @@ test("returns compact version 1 projections with current revisions", async () =>
   assert.deepEqual(capabilities, {
     protocol_version: 1,
     encounter_revision: 4,
+    brief_revision: 3,
     constraints_revision: 2,
     ok: true,
     data: {
@@ -165,7 +171,41 @@ test("feature detection and registration are idempotent per model context", asyn
   const adapter = createWebMCPAdapter({ snapshot: snapshot(), catalog: new CatalogIndex(catalogFixture), modelContext });
   assert.deepEqual(await adapter.register(), { available: true, label: "WebMCP connected" });
   assert.deepEqual(await adapter.register(), { available: true, label: "WebMCP connected" });
-  assert.equal(registered.length, 8);
+  assert.equal(registered.length, toolDefinitions().length);
   const result = await registered[1].execute({ encounter_id: "enc_test" });
   assert.equal(result.ok, true);
+});
+
+test("write tools route semantic commands through the shared engine and persist the resulting snapshot", async () => {
+  const catalog = new CatalogIndex(catalogFixture);
+  const commands = [];
+  const persisted = [];
+  const engine = {
+    snapshot: snapshot(),
+    execute(command) {
+      commands.push(command);
+      const next = snapshot({
+        encounterRevision: this.snapshot.encounterRevision + 1,
+        encounter: {
+          ...this.snapshot.encounter,
+          revision: this.snapshot.encounterRevision + 1,
+          generation: { id: command.generation_run_id ?? "run_test", state: "active" }
+        }
+      });
+      this.snapshot = next;
+      return { ok: true, snapshot: next, encounterRevision: next.encounterRevision, briefRevision: 3, constraintsRevision: 2, generationRunID: next.encounter.generation.id };
+    }
+  };
+  const adapter = createWebMCPAdapter({ engine, catalog, onMutation: draft => persisted.push(draft) });
+  const begun = await adapter.execute("sidekickdm_begin_generation", { encounter_id: "enc_test", expected_encounter_revision: 4, expected_brief_revision: 3, expected_constraints_revision: 2, content_boundaries_acknowledged: true });
+  assert.equal(begun.ok, true);
+  assert.equal(begun.generation_run_id, "run_test");
+  assert.equal(commands[0].command, "sidekickdm_begin_generation");
+  assert.equal(commands[0].origin, "webmcp");
+  assert.equal(persisted.length, 1);
+
+  const added = await adapter.execute("sidekickdm_add_existing_participant_group", { encounter_id: "enc_test", generation_run_id: "run_test", expected_encounter_revision: 5, expected_constraints_revision: 2, content_id: "creature/test/bog-strider/current", quantity: 2 });
+  assert.equal(added.ok, true);
+  assert.equal(commands[1].catalog_entry.content_id, "creature/test/bog-strider/current");
+  assert.equal(commands[1].catalog_entry.completeness, "complete");
 });

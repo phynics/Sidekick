@@ -10,6 +10,7 @@ private struct ErrorPayload: Encodable {
 private struct CommandResult: Encodable {
     let protocolVersion: Int
     let encounterRevision: Int
+    let briefRevision: Int
     let constraintsRevision: Int
     let generationRunID: String?
     let ok: Bool
@@ -51,20 +52,20 @@ public func sidekickDMInitialize() -> Int32 {
 @_cdecl("sidekickdm_execute")
 public func sidekickDMExecute(_ pointer: UnsafePointer<UInt8>?, _ length: Int32) -> Int32 {
     guard let pointer, length > 0 else {
-        publish(CommandResult(protocolVersion: 1, encounterRevision: store.draft.revision, constraintsRevision: store.draft.constraintsRevision, generationRunID: store.draft.generation?.id, ok: false, snapshot: store.snapshot(error: "Command input is empty."), error: ErrorPayload(code: "invalid_request", message: "Command input is empty.", details: [:])))
+        publish(CommandResult(protocolVersion: 1, encounterRevision: store.draft.revision, briefRevision: store.draft.briefRevision ?? 0, constraintsRevision: store.draft.constraintsRevision, generationRunID: store.draft.generation?.id, ok: false, snapshot: store.snapshot(error: "Command input is empty."), error: ErrorPayload(code: "invalid_request", message: "Command input is empty.", details: [:])))
         return 0
     }
     do {
         let value = try JSONSerialization.jsonObject(with: Data(bytes: pointer, count: Int(length)), options: [])
         guard let command = value as? [String: Any] else { throw SidekickDomainError("invalid_request", "Command input must be a JSON object.") }
         try SidekickCommandExecutor.execute(command, in: store)
-        publish(CommandResult(protocolVersion: 1, encounterRevision: store.draft.revision, constraintsRevision: store.draft.constraintsRevision, generationRunID: store.draft.generation?.id, ok: true, snapshot: store.snapshot(), error: nil))
+        publish(CommandResult(protocolVersion: 1, encounterRevision: store.draft.revision, briefRevision: store.draft.briefRevision ?? 0, constraintsRevision: store.draft.constraintsRevision, generationRunID: store.draft.generation?.id, ok: true, snapshot: store.snapshot(), error: nil))
         return 1
     } catch let error as SidekickDomainError {
-        publish(CommandResult(protocolVersion: 1, encounterRevision: store.draft.revision, constraintsRevision: store.draft.constraintsRevision, generationRunID: store.draft.generation?.id, ok: false, snapshot: store.snapshot(error: error.message), error: ErrorPayload(code: error.code, message: error.message, details: error.details)))
+        publish(CommandResult(protocolVersion: 1, encounterRevision: store.draft.revision, briefRevision: store.draft.briefRevision ?? 0, constraintsRevision: store.draft.constraintsRevision, generationRunID: store.draft.generation?.id, ok: false, snapshot: store.snapshot(error: error.message), error: ErrorPayload(code: error.code, message: error.message, details: error.details)))
         return 0
     } catch {
-        publish(CommandResult(protocolVersion: 1, encounterRevision: store.draft.revision, constraintsRevision: store.draft.constraintsRevision, generationRunID: store.draft.generation?.id, ok: false, snapshot: store.snapshot(error: error.localizedDescription), error: ErrorPayload(code: "application_error", message: error.localizedDescription, details: [:])))
+        publish(CommandResult(protocolVersion: 1, encounterRevision: store.draft.revision, briefRevision: store.draft.briefRevision ?? 0, constraintsRevision: store.draft.constraintsRevision, generationRunID: store.draft.generation?.id, ok: false, snapshot: store.snapshot(error: error.localizedDescription), error: ErrorPayload(code: "application_error", message: error.localizedDescription, details: [:])))
         return 0
     }
 }

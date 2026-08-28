@@ -124,16 +124,75 @@ public struct OriginalCreature: Codable, Equatable, Sendable {
     public var strikes: [CreatureStrike]
     public var abilities: [CreatureAbility]
     public var spellcastingStatus: String
+    /// Existing spellcasting text is carried through a fork unchanged. The
+    /// generation boundary may preserve these blocks, but never invents or
+    /// rewrites a spell list.
+    public var spellcastingBlocks: [String]
     public var tactics: String
     public var morale: String
     public var provenance: CreatureProvenance
 
-    public init(id: String = "cre_original", revision: Int = 0, identity: CreatureIdentity = CreatureIdentity(), perception: CreatureStatistic? = nil, senses: [String] = [], languages: [String] = [], skills: [String: Int] = [:], defenses: CreatureDefenses = CreatureDefenses(), speeds: [String: Int] = [:], strikes: [CreatureStrike] = [], abilities: [CreatureAbility] = [], spellcastingStatus: String = "none", tactics: String = "", morale: String = "", provenance: CreatureProvenance = CreatureProvenance()) {
-        self.id = id; self.revision = revision; self.identity = identity; self.perception = perception; self.senses = senses; self.languages = languages; self.skills = skills; self.defenses = defenses; self.speeds = speeds; self.strikes = strikes; self.abilities = abilities; self.spellcastingStatus = spellcastingStatus; self.tactics = tactics; self.morale = morale; self.provenance = provenance
+    public init(id: String = "cre_original", revision: Int = 0, identity: CreatureIdentity = CreatureIdentity(), perception: CreatureStatistic? = nil, senses: [String] = [], languages: [String] = [], skills: [String: Int] = [:], defenses: CreatureDefenses = CreatureDefenses(), speeds: [String: Int] = [:], strikes: [CreatureStrike] = [], abilities: [CreatureAbility] = [], spellcastingStatus: String = "none", spellcastingBlocks: [String] = [], tactics: String = "", morale: String = "", provenance: CreatureProvenance = CreatureProvenance()) {
+        self.id = id; self.revision = revision; self.identity = identity; self.perception = perception; self.senses = senses; self.languages = languages; self.skills = skills; self.defenses = defenses; self.speeds = speeds; self.strikes = strikes; self.abilities = abilities; self.spellcastingStatus = spellcastingStatus; self.spellcastingBlocks = spellcastingBlocks; self.tactics = tactics; self.morale = morale; self.provenance = provenance
     }
 
     public init(name: String, level: Int, concept: String = "", roadmap: CreatureRoadmap? = nil, encounterRole: EncounterRole = .brute, id: String = "cre_original") {
         self.init(id: id, identity: CreatureIdentity(name: name, level: level, concept: concept, roadmap: roadmap, encounterRole: encounterRole))
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, revision, identity, perception, senses, languages, skills, defenses, speeds, strikes, abilities
+        case spellcastingStatus, spellcastingBlocks, spellcasting, tactics, morale, provenance
+    }
+
+    private struct SpellcastingPayload: Codable {
+        var status: String
+        var blocks: [String]
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let nestedSpellcasting = try container.decodeIfPresent(SpellcastingPayload.self, forKey: .spellcasting)
+        let spellcastingStatus = try container.decodeIfPresent(String.self, forKey: .spellcastingStatus) ?? "none"
+        let spellcastingBlocks = try container.decodeIfPresent([String].self, forKey: .spellcastingBlocks) ?? []
+        self.init(
+            id: try container.decodeIfPresent(String.self, forKey: .id) ?? "cre_original",
+            revision: try container.decodeIfPresent(Int.self, forKey: .revision) ?? 0,
+            identity: try container.decodeIfPresent(CreatureIdentity.self, forKey: .identity) ?? CreatureIdentity(),
+            perception: try container.decodeIfPresent(CreatureStatistic.self, forKey: .perception),
+            senses: try container.decodeIfPresent([String].self, forKey: .senses) ?? [],
+            languages: try container.decodeIfPresent([String].self, forKey: .languages) ?? [],
+            skills: try container.decodeIfPresent([String: Int].self, forKey: .skills) ?? [:],
+            defenses: try container.decodeIfPresent(CreatureDefenses.self, forKey: .defenses) ?? CreatureDefenses(),
+            speeds: try container.decodeIfPresent([String: Int].self, forKey: .speeds) ?? [:],
+            strikes: try container.decodeIfPresent([CreatureStrike].self, forKey: .strikes) ?? [],
+            abilities: try container.decodeIfPresent([CreatureAbility].self, forKey: .abilities) ?? [],
+            spellcastingStatus: nestedSpellcasting?.status ?? spellcastingStatus,
+            spellcastingBlocks: nestedSpellcasting?.blocks ?? spellcastingBlocks,
+            tactics: try container.decodeIfPresent(String.self, forKey: .tactics) ?? "",
+            morale: try container.decodeIfPresent(String.self, forKey: .morale) ?? "",
+            provenance: try container.decodeIfPresent(CreatureProvenance.self, forKey: .provenance) ?? CreatureProvenance()
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(revision, forKey: .revision)
+        try container.encode(identity, forKey: .identity)
+        try container.encodeIfPresent(perception, forKey: .perception)
+        try container.encode(senses, forKey: .senses)
+        try container.encode(languages, forKey: .languages)
+        try container.encode(skills, forKey: .skills)
+        try container.encode(defenses, forKey: .defenses)
+        try container.encode(speeds, forKey: .speeds)
+        try container.encode(strikes, forKey: .strikes)
+        try container.encode(abilities, forKey: .abilities)
+        try container.encode(spellcastingStatus, forKey: .spellcastingStatus)
+        try container.encode(spellcastingBlocks, forKey: .spellcastingBlocks)
+        try container.encode(tactics, forKey: .tactics)
+        try container.encode(morale, forKey: .morale)
+        try container.encode(provenance, forKey: .provenance)
     }
 }
 

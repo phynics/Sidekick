@@ -218,7 +218,7 @@ public struct PhaseAuthoringDocument: Codable, Equatable, Sendable {
     }
 
     public init(encounter draft: EncounterDraft) {
-        self.init(encounterID: draft.id, title: draft.title, revision: draft.revision, partyLevel: draft.brief.party.effectiveLevel, partySize: draft.brief.party.size, participantGroups: draft.participantGroups, hazards: draft.hazards, phases: draft.phases.map(PhaseAuthoring.init(legacy:)))
+        self.init(encounterID: draft.id, title: draft.title, revision: draft.revision, partyLevel: draft.brief.party.effectiveLevel, partySize: draft.brief.party.size, participantGroups: draft.participantGroups, hazards: draft.hazards, phases: draft.structuredPhases ?? draft.phases.map(PhaseAuthoring.init(legacy:)))
     }
 }
 
@@ -405,7 +405,7 @@ public final class PhaseAuthoringStore: @unchecked Sendable {
     }
 
     public func encounterDraftProjection() -> EncounterDraft {
-        var draft = EncounterDraft(id: document.encounterID, title: document.title, brief: EncounterBrief(party: PartySnapshot(effectiveLevel: document.partyLevel, size: document.partySize)), participantGroups: document.participantGroups, hazards: document.hazards, phases: document.phases.map(\.legacyPhase))
+        var draft = EncounterDraft(id: document.encounterID, title: document.title, brief: EncounterBrief(party: PartySnapshot(effectiveLevel: document.partyLevel, size: document.partySize)), participantGroups: document.participantGroups, hazards: document.hazards, phases: document.phases.map(\.legacyPhase), structuredPhases: document.phases)
         draft.revision = document.revision
         return draft
     }

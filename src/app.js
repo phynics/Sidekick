@@ -5,11 +5,14 @@ import { createHazardBuilder, createEmptySimpleHazard } from "./hazard-builder.j
 import { createEncounterPacketEditor, createEmptyPacket } from "./encounter-packet.js";
 import { createWebMCPAdapter } from "./webmcp-adapter.js";
 import { createNPCProfileEditor, createEmptyNPCProfile } from "./npc-profile.js";
+import { createEncounterPhaseEditor, createEmptyPhase } from "./encounter-phases.js";
+import { createEncounterFile, importEncounterFile } from "./encounter-file.js";
+import { createEncounterPrintProjection, renderEncounterPrintProjection } from "./print-packet.js";
 
 const app = document.querySelector("#app");
 const STORAGE_DB = "sidekick-dm";
 const STORAGE_STORE = "encounters";
-const uiState = { creature: null, hazard: null, packet: null, npc: null, npcTarget: null, webMCPStatus: "WebMCP unavailable in this browser" };
+const uiState = { creature: null, hazard: null, packet: null, npc: null, npcTarget: null, phase: null, webMCPStatus: "WebMCP unavailable in this browser" };
 globalThis.sidekickBridge = Object.freeze({ notifySwiftValue(value) { return `JavaScript bridge received Swift value ${value}.`; } });
 
 function escapeHtml(value) { return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;"); }
@@ -21,6 +24,31 @@ async function loadRecord(key) { try { const db = await openStore(); if (!db) re
 async function saveRecord(key, value) { try { const db = await openStore(); if (!db) return false; return await new Promise((resolve, reject) => { const request = db.transaction(STORAGE_STORE, "readwrite").objectStore(STORAGE_STORE).put(value, key); request.onsuccess = () => resolve(true); request.onerror = () => reject(request.error); }); } catch { return false; } }
 async function loadSavedDraft() { return loadRecord("current"); }
 async function saveDraft(draft) { return saveRecord("current", draft); }
+
+function encounterJSON(engine) {
+  const draft = engine.snapshot.encounter ?? engine.snapshot.draft;
+  return createEncounterFile({ encounter: draft, licenseNotices: ["Unofficial Sidekick DM encounter data.", "Catalog rules data is provided under the ORC License where applicable."] });
+}
+
+function encounterPrintHTML(engine) {
+  return renderEncounterPrintProjection(createEncounterPrintProjection(engine.snapshot));
+}
+
+function downloadText(filename, contents, type = "application/json") {
+  const url = URL.createObjectURL(new Blob([contents], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  queueMicrotask(() => URL.revokeObjectURL(url));
+}
+
+function openPrintPreview(engine) {
+  const url = URL.createObjectURL(new Blob([encounterPrintHTML(engine)], { type: "text/html" }));
+  const preview = globalThis.open(url, "sidekickdm-print");
+  if (preview) preview.addEventListener("load", () => preview.print(), { once: true });
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
 
 function issue(engine, command, { persist = true } = {}) {
   const result = engine.execute(command);
@@ -67,6 +95,9 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
   if (!engine.available) { app.innerHTML = `<section class="panel error"><h1>Sidekick DM could not start</h1><p>${escapeHtml(engine.reason)}</p></section>`; return; }
   const snapshot = engine.snapshot; const draft = snapshot.encounter ?? snapshot.draft; const party = draft.brief?.party ?? { effectiveLevel: 1, size: 4 }; const target = draft.brief?.threatTarget ?? { kind: "moderate", customXP: null }; const budget = snapshot.budget ?? { baseTargetXP: 80, constructionBudget: 80, baseXPAward: 80, guaranteedXP: 0, avoidableXP: 0, conditionalXP: 0, peakActiveXP: 0, totalEncounterXP: 0, inferredThreat: "trivial", warnings: [] };
   const participants = (draft.participantGroups ?? []).map((group) => `<li data-testid="participant-${escapeHtml(group.id)}"><strong>${escapeHtml(group.quantity)} × ${escapeHtml(group.name)}</strong><span>Level ${group.level} · ${escapeHtml(group.participation?.mode ?? "mandatory")}</span>${String(group.contentID ?? "").startsWith("creature/") && !String(group.contentID).startsWith("creature/custom/") ? `<label>Quantity<input data-catalog-component="${escapeHtml(group.id)}" data-catalog-field="quantity" type="number" min="1" value="${group.quantity}"></label><label>Adjustment<select data-catalog-component="${escapeHtml(group.id)}" data-catalog-field="adjustment">${["normal", "weak", "elite"].map((value) => `<option value="${value}" ${group.adjustment === value ? "selected" : ""}>${value}</option>`).join("")}</select></label>` : ""}</li>`).join("");
+  const hazards = (draft.hazards ?? []).map((hazard) => `<li data-testid="hazard-${escapeHtml(hazard.id)}"><strong>${escapeHtml(hazard.name)}</strong><span>Level ${hazard.level} · ${escapeHtml(hazard.complexity)} · ${escapeHtml(hazard.participation?.mode ?? "avoidable")}</span></li>`).join("");
+  const authoredPhases = draft.structuredPhases ?? draft.phases ?? [];
+  const phases = authoredPhases.map((phase) => `<li data-testid="phase-${escapeHtml(phase.id)}"><strong>${escapeHtml(phase.title)}</strong><span>${escapeHtml(phase.trigger?.explanation ?? phase.trigger ?? "No trigger")} · ${(phase.participantIDs ?? []).length} participant group(s) · ${(phase.hazardIDs ?? []).length} Hazard(s)</span></li>`).join("");
   const activities = (snapshot.activity ?? []).slice(0, 6).map((entry) => `<li><span>${escapeHtml(entry.description)}</span><small>${escapeHtml(entry.origin)} · rev ${entry.afterRevision}</small></li>`).join("");
   const catalogResults = catalogState.results ?? catalog?.search({ kind: "creature", query: catalogState.query });
   const catalogMarkup = catalogResults?.results?.map((entry) => `<li><div><strong>${escapeHtml(entry.name)}</strong><span>Level ${entry.level} · ${escapeHtml(entry.source)}</span><small>${escapeHtml(entry.summary)}</small></div><button type="button" data-catalog-add="${escapeHtml(entry.content_id)}">Add</button></li>`).join("") ?? "";
@@ -87,13 +118,16 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
         <section class="panel encounter-panel"><div class="panel-heading"><h2>Encounter Draft</h2><span class="badge" data-testid="readiness">${escapeHtml(snapshot.readiness?.status ?? "incomplete")}</span></div>
           <label>Encounter title<input data-testid="encounter-title" data-field="title" value="${escapeHtml(draft.title)}"></label>
           <h3>Participants</h3><ul class="participants">${participants || "<li class=empty>No participants yet. Add one to see PF2 XP math.</li>"}</ul>
+          <h3>Hazards</h3><ul class="participants">${hazards || "<li class=empty>No Hazards placed.</li>"}</ul>
+          <h3>Phases</h3><ul class="participants">${phases || "<li class=empty>No Phases authored.</li>"}</ul>
           <section class="catalog-panel"><h3>Existing Creatures</h3><form data-action="search-catalog" class="add-form"><input name="query" value="${escapeHtml(catalogState.query)}" placeholder="Search the curated Catalog"><button type="submit">Search</button></form><p>${catalogResults?.total ?? 0} supported result(s)</p><ul class="catalog-results">${catalogMarkup || "<li class=empty>No matching supported creatures.</li>"}</ul></section>
           <details class="builder-panel"><summary>Create an Original Creature</summary><div id="creature-builder-root"></div></details>
           <details class="builder-panel"><summary>Create a Simple Hazard</summary><div id="hazard-builder-root"></div></details>
           <details class="builder-panel"><summary>Author the Encounter Packet</summary><div id="encounter-packet-root"></div></details>
           <details class="builder-panel"><summary>Attach an NPC Profile</summary>${npcTarget ? `<label>Participant Group<select data-action="npc-target">${npcOptions}</select></label><div id="npc-profile-root"></div>` : "<p>Add a participant before attaching an NPC Profile.</p>"}</details>
+          <details class="builder-panel"><summary>Stage an Encounter Phase</summary><div id="encounter-phase-root"></div></details>
           <form data-action="add-participant" class="add-form"><input name="name" placeholder="Creature name" required><input name="level" type="number" value="${party.effectiveLevel}" aria-label="Creature level"><input name="quantity" type="number" min="1" value="1" aria-label="Quantity"><button type="submit">Add participant</button></form>
-          <div class="controls"><button type="button" data-action="undo" ${snapshot.canUndo ? "" : "disabled"}>Undo</button><button type="button" data-action="redo" ${snapshot.canRedo ? "" : "disabled"}>Redo</button><button type="button" data-action="increment" class="legacy-control">Change Swift state</button></div><span class="sr-only">Swift-owned value <span data-testid="swift-value">${draft.swiftOwnedValue}</span></span>
+          <div class="controls"><button type="button" data-action="undo" ${snapshot.canUndo ? "" : "disabled"}>Undo</button><button type="button" data-action="redo" ${snapshot.canRedo ? "" : "disabled"}>Redo</button><button type="button" data-action="export-encounter">Export Encounter</button><label class="file-control">Import Encounter<input type="file" accept="application/json,.json" data-action="import-encounter"></label><button type="button" data-action="print-encounter">Print Packet</button><button type="button" data-action="increment" class="legacy-control">Change Swift state</button></div><span class="sr-only">Swift-owned value <span data-testid="swift-value">${draft.swiftOwnedValue}</span></span>
           <p class="status" data-testid="notice">${escapeHtml(notice || "Ready for a semantic mutation.")}</p>
         </section>
         <aside class="panel activity-panel"><h2>Activity</h2><ul>${activities || "<li class=empty>No mutations yet.</li>"}</ul><p class="status" data-testid="asset-status">${escapeHtml(asset.asset_message)}</p><p class="status" data-testid="bridge-status">${escapeHtml(bridgeMessage || "JavaScript bridge waiting.")}</p><p class="status" data-testid="webmcp-status">${escapeHtml(uiState.webMCPStatus)}</p></aside>
@@ -114,6 +148,24 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
   app.querySelectorAll("[data-catalog-component]").forEach((field) => field.addEventListener("change", () => { const prepared = catalog.updateParticipantCommand(field.dataset.catalogComponent, { [field.dataset.catalogField]: field.dataset.catalogField === "quantity" ? Number(field.value) : field.value }); if (!prepared.ok) return render({ asset, engine, catalog, catalogState, notice: prepared.error.message }); mutate(prepared.command, "Catalog participant updated"); }));
   app.querySelector('[data-action="undo"]').addEventListener("click", () => mutate({ command: "sidekickdm_undo" }, "Undid mutation"));
   app.querySelector('[data-action="redo"]').addEventListener("click", () => mutate({ command: "sidekickdm_redo" }, "Redid mutation"));
+  app.querySelector('[data-action="export-encounter"]').addEventListener("click", () => downloadText(`${draft.id}.sidekickdm.json`, encounterJSON(engine)));
+  app.querySelector('[data-action="print-encounter"]').addEventListener("click", () => openPrintPreview(engine));
+  app.querySelector('[data-action="import-encounter"]').addEventListener("change", async event => {
+    const file = event.currentTarget.files?.[0];
+    if (!file) return;
+    try {
+      const existingIDs = [draft.id, ...(draft.participantGroups ?? []).map(item => item.id), ...(draft.hazards ?? []).map(item => item.id), ...(draft.phases ?? []).map(item => item.id)];
+      const imported = importEncounterFile(await file.text(), { existingIDs, importedAt: new Date().toISOString() });
+      const restored = issue(engine, { command: "sidekickdm_load_draft", draft_json: JSON.stringify(imported.draft), origin: "import" });
+      if (!restored.ok) throw new Error(restored.error?.message ?? "The Encounter could not be restored.");
+      engine.snapshot = restored.snapshot;
+      await saveDraft(imported.draft);
+      const remapped = Object.keys(imported.remappedIDs).length;
+      render({ asset, engine, catalog, catalogState, notice: `Encounter imported${remapped ? ` with ${remapped} remapped ID(s)` : ""}.` });
+    } catch (error) {
+      render({ asset, engine, catalog, catalogState, notice: error instanceof Error ? error.message : String(error) });
+    }
+  });
   app.querySelector('[data-action="increment"]').addEventListener("click", () => { const result = issue(engine, { command: "sidekick_increment", expected_revision: draft.revision, origin: "gm" }); if (!result.ok) return render({ asset, engine: { ...engine, snapshot: result.snapshot }, catalog, catalogState, notice: result.error?.message }); engine.snapshot = result.snapshot; render({ asset, engine, catalog, catalogState, bridgeMessage: globalThis.sidekickBridge.notifySwiftValue(result.snapshot.draft.swiftOwnedValue), notice: "Swift-owned state changed" }); });
   createCreatureBuilder({
     root: app.querySelector("#creature-builder-root"),
@@ -154,18 +206,35 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
       onAutosave: (envelope) => { uiState.npc = envelope.profile; void saveRecord("npc-profile", envelope); }
     });
   }
+  const phaseValue = authoredPhases[0] ?? uiState.phase ?? createEmptyPhase({ order: authoredPhases.length });
+  const phaseDraft = {
+    ...phaseValue,
+    trigger: typeof phaseValue.trigger === "object" ? phaseValue.trigger : { kind: "custom", explanation: String(phaseValue.trigger ?? ""), value: null, canOverlap: true },
+    terrainChanges: phaseValue.terrainChanges ?? [],
+    participantIDs: phaseValue.participantIDs ?? [],
+    hazardIDs: phaseValue.hazardIDs ?? []
+  };
+  createEncounterPhaseEditor({
+    root: app.querySelector("#encounter-phase-root"),
+    phase: phaseDraft,
+    participantGroups: draft.participantGroups ?? [],
+    hazards: draft.hazards ?? [],
+    onMutation: command => mutate(command, "Encounter Phase saved"),
+    onAutosave: envelope => { uiState.phase = envelope.phase; void saveRecord("encounter-phase", envelope); }
+  });
 }
 
 try {
   const [loaded, catalog] = await Promise.all([loadBootAssets(), loadCatalog()]);
-  const [saved, savedCreature, savedHazard, savedPacket, savedNPC] = await Promise.all([loadSavedDraft(), loadRecord("original-creature"), loadRecord("simple-hazard"), loadRecord("encounter-packet"), loadRecord("npc-profile")]);
+  const [saved, savedCreature, savedHazard, savedPacket, savedNPC, savedPhase] = await Promise.all([loadSavedDraft(), loadRecord("original-creature"), loadRecord("simple-hazard"), loadRecord("encounter-packet"), loadRecord("npc-profile"), loadRecord("encounter-phase")]);
   uiState.creature = savedCreature?.creature ?? null;
   uiState.hazard = savedHazard?.hazard ?? null;
   uiState.packet = savedPacket?.packet ?? null;
   uiState.npc = savedNPC?.profile ?? null;
+  uiState.phase = savedPhase?.phase ?? null;
   if (saved && loaded.engine.available) { const payload = JSON.stringify(saved); const restored = loaded.engine.execute({ command: "sidekick_load_draft", draft_json: payload, origin: "reload" }); if (restored.ok) loaded.engine.snapshot = restored.snapshot; }
-  const webMCP = createWebMCPAdapter({ engine: loaded.engine, catalog });
+  const webMCP = createWebMCPAdapter({ engine: loaded.engine, catalog, onMutation: draft => saveDraft(draft) });
   uiState.webMCPStatus = (await webMCP.register()).label;
-  globalThis.sidekickDM = Object.freeze({ asset: loaded.asset, engine: loaded.engine, catalog, webMCP, bridge: globalThis.sidekickBridge, persistence: { loadSavedDraft, saveDraft, loadRecord, saveRecord } });
+  globalThis.sidekickDM = Object.freeze({ asset: loaded.asset, engine: loaded.engine, catalog, webMCP, bridge: globalThis.sidekickBridge, persistence: { loadSavedDraft, saveDraft, loadRecord, saveRecord }, actions: { exportEncounter: () => encounterJSON(loaded.engine), printEncounter: () => encounterPrintHTML(loaded.engine) } });
   render({ asset: loaded.asset, engine: loaded.engine, catalog, notice: saved ? "Encounter Draft reloaded from IndexedDB." : "New Encounter Draft ready." });
 } catch (error) { app.innerHTML = `<section class="panel error"><h1>Sidekick DM could not load</h1><p>${escapeHtml(error instanceof Error ? error.message : error)}</p></section>`; }

@@ -14,8 +14,13 @@
     "verify:native": "node scripts/verify-native.mjs",
     "verify:browser": "node scripts/verify-browser-source.mjs",
     "verify:webmcp": "node scripts/verify-webmcp.mjs",
+    "verify:generation": "node scripts/verify-generation-run.mjs",
     "verify:catalog": "node scripts/verify-catalog.mjs",
+    "verify:fixtures": "node scripts/verify-fixtures.mjs",
+    "test:native": "swift test --package-path native",
+    "test:js": "node --test tests/*.test.mjs",
     "test:browser": "node scripts/chromium-smoke.mjs",
-    "check": "npm run bootstrap && npm run verify:catalog && npm run verify:webmcp && npm run build && npm run verify:native && npm run verify:browser && npm run test:browser"
+    "acceptance": "node scripts/acceptance.mjs",
+    "check": "npm run acceptance"
   }
 }

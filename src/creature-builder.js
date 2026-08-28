@@ -42,7 +42,7 @@ export function recommendedBands(roadmap) {
 }
 
 export function createEmptyOriginalCreature() {
-  return { objectVersion: 1, id: `cre_${globalThis.crypto?.randomUUID?.() ?? "draft"}`, revision: 0, identity: { name: "", level: 1, rarity: "common", size: "medium", traits: [], concept: "", roadmap: null, encounterRole: "brute" }, perception: null, senses: [], languages: [], skills: {}, defenses: { ac: null, fortitude: null, reflex: null, will: null, hp: null, immunities: [], weaknesses: [], resistances: [] }, speeds: {}, strikes: [], abilities: [], spellcastingStatus: "none", tactics: "", morale: "", provenance: { origin: "original", basedOnContentID: null, createdAt: "", mutationOrigin: "gm" } };
+  return { objectVersion: 1, id: `cre_${globalThis.crypto?.randomUUID?.() ?? "draft"}`, revision: 0, identity: { name: "", level: 1, rarity: "common", size: "medium", traits: [], concept: "", roadmap: null, encounterRole: "brute" }, perception: null, senses: [], languages: [], skills: {}, defenses: { ac: null, fortitude: null, reflex: null, will: null, hp: null, immunities: [], weaknesses: [], resistances: [] }, speeds: {}, strikes: [], abilities: [], spellcastingStatus: "none", spellcastingBlocks: [], tactics: "", morale: "", provenance: { origin: "original", basedOnContentID: null, createdAt: "", mutationOrigin: "gm" } };
 }
 
 const text = (value) => typeof value === "string" && value.trim().length > 0;

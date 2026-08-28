@@ -81,8 +81,9 @@ public struct GenerationRunSnapshot: Equatable, Sendable {
     public let generationRunID: String?
     public let generationState: GenerationRunLifecycleState?
     public let designWarnings: [String]
+    public let phaseBudget: PhaseBudgetProjection
 
-    public init(draft: EncounterDraft, briefRevision: Int, activity: [ActivityEntry], canUndo: Bool, canRedo: Bool, manualWritesLocked: Bool, generationRunID: String?, generationState: GenerationRunLifecycleState?, designWarnings: [String] = []) {
+    public init(draft: EncounterDraft, briefRevision: Int, activity: [ActivityEntry], canUndo: Bool, canRedo: Bool, manualWritesLocked: Bool, generationRunID: String?, generationState: GenerationRunLifecycleState?, designWarnings: [String] = [], phaseBudget: PhaseBudgetProjection = PhaseBudgetProjection()) {
         self.draft = draft
         self.briefRevision = briefRevision
         self.activity = activity
@@ -92,6 +93,7 @@ public struct GenerationRunSnapshot: Equatable, Sendable {
         self.generationRunID = generationRunID
         self.generationState = generationState
         self.designWarnings = designWarnings
+        self.phaseBudget = phaseBudget
     }
 }
 
@@ -128,6 +130,7 @@ public enum GenerationRunError: Error, Equatable, Sendable {
     case invalidParticipantGroup
     case catalogEntryPartial
     case invalidPacketSection
+    case invalidPhase(PhaseAuthoringError)
     case structuralErrors([String])
     case futureSchemaVersion
     case invalidPersistence
@@ -150,6 +153,7 @@ public enum GenerationRunError: Error, Equatable, Sendable {
         case .invalidParticipantGroup: return "invalid_participant_group"
         case .catalogEntryPartial: return "catalog_entry_partial"
         case .invalidPacketSection: return "invalid_packet_section"
+        case .invalidPhase(let error): return error.code
         case .structuralErrors: return "generation_structural_errors"
         case .futureSchemaVersion: return "future_schema_version"
         case .invalidPersistence: return "invalid_persistence"
@@ -174,6 +178,7 @@ public enum GenerationRunError: Error, Equatable, Sendable {
         case .invalidParticipantGroup: return "The Existing Participant Group is not a complete Creature Catalog entry."
         case .catalogEntryPartial: return "Only complete, supported Catalog Entries can be added as Existing Participant Groups."
         case .invalidPacketSection: return "The Encounter Packet section payload is invalid."
+        case .invalidPhase(let error): return error.message
         case .structuralErrors: return "The Encounter Packet has structural errors that prevent finishing the Generation Run."
         case .futureSchemaVersion: return "The saved Generation Run uses a newer schema version."
         case .invalidPersistence: return "The saved Generation Run is invalid."
@@ -188,6 +193,7 @@ public enum GenerationRunError: Error, Equatable, Sendable {
         case .unknownEncounter(let id): return ["encounter_id": id]
         case .wrongGenerationRun(let expected, let current): return ["expected_generation_run_id": expected, "current_generation_run_id": current]
         case .structuralErrors(let errors): return ["structural_errors": errors.joined(separator: " | ")]
+        case .invalidPhase(let error): return ["phase_error": error.code]
         default: return [:]
         }
     }
@@ -222,9 +228,10 @@ public final class GenerationRunController: @unchecked Sendable {
     public var canRedo: Bool { !redoHistory.isEmpty }
     public var generationRunID: String? { draft.generation?.id }
     public var generationState: GenerationRunLifecycleState? { draft.generation.flatMap { GenerationRunLifecycleState(rawValue: $0.state) } }
+    public var phaseBudget: PhaseBudgetProjection { PhaseAuthoringMath.project(document: PhaseAuthoringDocument(encounter: draft)) }
 
     public func snapshot() -> GenerationRunSnapshot {
-        GenerationRunSnapshot(draft: draft, briefRevision: briefRevision, activity: activity, canUndo: canUndo, canRedo: canRedo, manualWritesLocked: manualWritesLocked, generationRunID: generationRunID, generationState: generationState, designWarnings: designWarnings)
+        GenerationRunSnapshot(draft: draft, briefRevision: briefRevision, activity: activity, canUndo: canUndo, canRedo: canRedo, manualWritesLocked: manualWritesLocked, generationRunID: generationRunID, generationState: generationState, designWarnings: designWarnings, phaseBudget: phaseBudget)
     }
 
     @discardableResult
@@ -300,6 +307,57 @@ public final class GenerationRunController: @unchecked Sendable {
             draft.participantGroups.append(group)
         }
         return id
+    }
+
+    /// Add or replace one structured Phase while a Generation Run is active.
+    /// Validation runs against the current component snapshot before the run
+    /// mutation starts, so invalid references cannot partially change the draft.
+    @discardableResult
+    public func upsertPhase(
+        _ phase: PhaseAuthoring,
+        encounterID: String,
+        generationRunID: String,
+        expectedEncounterRevision: Int,
+        expectedConstraintsRevision: Int,
+        origin: String = "webmcp"
+    ) throws -> Int {
+        let authoring = PhaseAuthoringStore(encounter: draft, origin: origin)
+        do {
+            try authoring.upsert(phase, origin: origin)
+        } catch let error as PhaseAuthoringError {
+            throw GenerationRunError.invalidPhase(error)
+        }
+        let phases = authoring.phases
+        return try mutate(encounterID: encounterID, generationRunID: generationRunID, expectedEncounterRevision: expectedEncounterRevision, expectedConstraintsRevision: expectedConstraintsRevision, origin: origin, description: "Authored Phase \(phase.title)") { draft in
+            draft.structuredPhases = phases
+            draft.phases = phases.map(\.legacyPhase)
+        }
+    }
+
+    /// Apply one agent-authored change after a run has finished. The change is
+    /// stored as its own history entry, leaving the finished run undoable next.
+    @discardableResult
+    public func applyTargetedRevision(
+        encounterID: String,
+        expectedEncounterRevision: Int,
+        origin: String = "webmcp",
+        description: String = "Applied targeted agent revision",
+        operation: (inout EncounterDraft) throws -> Void
+    ) throws -> Int {
+        try checkEncounter(encounterID, expectedRevision: expectedEncounterRevision)
+        guard draft.generation == nil else { throw GenerationRunError.manualWriteLocked }
+        guard origin != "gm" && origin != "manual" else { throw GenerationRunError.manualWriteLocked }
+        var next = draft
+        try operation(&next)
+        history.append(draft)
+        redoHistory.removeAll()
+        commit(next, description: description, origin: origin)
+        return draft.revision
+    }
+
+    @discardableResult
+    public func applyTargetedRevision(expectedEncounterRevision: Int, origin: String = "webmcp", description: String = "Applied targeted agent revision", operation: (inout EncounterDraft) throws -> Void) throws -> Int {
+        try applyTargetedRevision(encounterID: draft.id, expectedEncounterRevision: expectedEncounterRevision, origin: origin, description: description, operation: operation)
     }
 
     @discardableResult

@@ -2,6 +2,16 @@ import XCTest
 @testable import SidekickDMCore
 
 final class EncounterMathTests: XCTestCase {
+    private func completePacket() -> EncounterPacketContentV1 {
+        EncounterPacketContentV1(
+            identity: PacketIdentitySection(title: "The Bell", premise: "Cultists ring a drowned bell.", objective: "Stop the ritual.", stakes: "The shrine floods."),
+            setup: PacketSetupSection(trigger: "The bell sounds.", battlefieldDescription: "A flooded shrine.", startingPositions: "The party stands at the east arch.", awarenessState: "The cultists are alert.", immediateFeatures: ["Deep water"]),
+            runningGuidance: PacketRunningGuidanceSection(participantRoles: "Skirmishers screen the leader.", openingTactics: "Circle isolated targets.", ongoingTactics: "Fall back through the water.", coordinationConflict: "The leader protects the bell.", triggersReinforcements: "Reinforce when the bell cracks.", moraleSummary: "Flee when the leader falls."),
+            cohesion: PacketCohesionSection(participantPresence: "The cult guards the shrine.", relationships: "The leader commands the skirmishers.", hazardTerrainFit: "The flooded floor protects the cult.", theme: "Drowned devotion."),
+            information: PacketInformationSection(immediatelyApparent: ["The bell is cracked."], discoverable: ["The ritual route"], gmSecret: ["The bell hides a seal."]),
+            outcomes: PacketOutcomesSection(victory: "The ritual stops.", failure: "The shrine floods.")
+        )
+    }
     func testGoldenThreatAndPartyAdjustments() {
         XCTAssertEqual(EncounterMath.baseBudget(for: ThreatTarget(kind: .severe)), 120)
         XCTAssertEqual(EncounterMath.partyAdjustedBudget(for: ThreatTarget(kind: .severe), partySize: 5), 150)
@@ -65,6 +75,10 @@ final class EncounterMathTests: XCTestCase {
         try SidekickCommandExecutor.execute([
             "command": "sidekickdm_begin_generation",
             "expected_revision": 1,
+            "expected_brief_revision": 0,
+            "expected_constraints_revision": 0,
+            "content_boundaries_acknowledged": true,
+            "origin": "webmcp",
             "generation_run_id": "run_test"
         ], in: store)
         try SidekickCommandExecutor.execute([
@@ -73,16 +87,96 @@ final class EncounterMathTests: XCTestCase {
             "name": "Flood Cultist",
             "level": 1,
             "quantity": 1,
-            "expected_revision": 2
+            "expected_revision": 2,
+            "expected_constraints_revision": 0,
+            "origin": "webmcp"
         ], in: store)
         try SidekickCommandExecutor.execute([
             "command": "sidekickdm_cancel_generation",
             "generation_run_id": "run_test",
-            "expected_revision": 3
+            "expected_revision": 3,
+            "origin": "webmcp"
         ], in: store)
 
         XCTAssertEqual(store.draft.revision, 4)
         XCTAssertTrue(store.draft.participantGroups.isEmpty)
         XCTAssertNil(store.draft.generation)
+    }
+
+    func testSharedGenerationBoundaryLocksManualWritesAndKeepsTargetedAndRunUndoSeparate() throws {
+        let packet = completePacket()
+        let opening = EncounterDraft(id: "enc_run", briefRevision: 3, constraintsRevision: 4, packet: packet.flattenedCorePacket(), packetV1: packet)
+        let store = EncounterStore(draft: opening)
+
+        XCTAssertThrowsError(try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_begin_generation",
+            "encounter_id": "enc_run",
+            "expected_revision": 0,
+            "expected_brief_revision": 3,
+            "expected_constraints_revision": 4,
+            "content_boundaries_acknowledged": false,
+            "origin": "webmcp"
+        ], in: store)) { error in
+            XCTAssertEqual((error as? SidekickDomainError)?.code, "content_constraint_not_acknowledged")
+        }
+        XCTAssertEqual(store.draft, opening)
+
+        try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_begin_generation",
+            "encounter_id": "enc_run",
+            "generation_run_id": "run_shared",
+            "expected_revision": 0,
+            "expected_brief_revision": 3,
+            "expected_constraints_revision": 4,
+            "content_boundaries_acknowledged": true,
+            "origin": "webmcp"
+        ], in: store)
+        XCTAssertThrowsError(try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_set_threat_target",
+            "kind": "severe",
+            "expected_revision": 1,
+            "origin": "gm"
+        ], in: store)) { error in
+            XCTAssertEqual((error as? SidekickDomainError)?.code, "manual_write_locked")
+        }
+
+        try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_add_participant_group",
+            "encounter_id": "enc_run",
+            "generation_run_id": "run_shared",
+            "expected_revision": 1,
+            "expected_constraints_revision": 4,
+            "name": "Bog Strider",
+            "level": 1,
+            "origin": "webmcp"
+        ], in: store)
+        try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_finish_generation",
+            "encounter_id": "enc_run",
+            "generation_run_id": "run_shared",
+            "expected_revision": 2,
+            "expected_constraints_revision": 4,
+            "origin": "webmcp"
+        ], in: store)
+        let runResult = store.draft
+        XCTAssertNil(runResult.generation)
+        XCTAssertEqual(runResult.reviewState, "needed")
+
+        try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_set_encounter_identity",
+            "encounter_id": "enc_run",
+            "expected_revision": 3,
+            "value": ["objectVersion": 1, "title": "Targeted revision", "premise": "Cultists ring a drowned bell.", "objective": "Stop the ritual.", "stakes": "The shrine floods."],
+            "origin": "webmcp"
+        ], in: store)
+        XCTAssertEqual(store.draft.title, "Targeted revision")
+        try store.undo(expectedRevision: 4, origin: "gm")
+        var expectedRunResult = runResult
+        expectedRunResult.revision = 5
+        XCTAssertEqual(store.draft, expectedRunResult)
+        try store.undo(expectedRevision: 5, origin: "gm")
+        var expectedOpening = opening
+        expectedOpening.revision = 6
+        XCTAssertEqual(store.draft, expectedOpening)
     }
 }

@@ -1,5 +1,4 @@
 import Foundation
-import CoreFoundation
 
 /// The portable Sidekick DM file contract. This layer deliberately does not
 /// make the engine's `EncounterDraft` the file schema: the file uses the
@@ -124,7 +123,7 @@ public enum AnyCodable: Codable, Equatable, Sendable {
         switch foundationValue {
         case _ as NSNull: self = .null
         case let value as NSNumber:
-            if CFGetTypeID(value) == CFBooleanGetTypeID() { self = .bool(value.boolValue) } else { self = .number(value.doubleValue) }
+            if String(cString: value.objCType) == "c" { self = .bool(value.boolValue) } else { self = .number(value.doubleValue) }
         case let value as Bool: self = .bool(value)
         case let value as String: self = .string(value)
         case let value as [Any]: self = .array(try value.map(AnyCodable.init(foundationValue:)))

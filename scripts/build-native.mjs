@@ -1,12 +1,14 @@
 import { cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
+import { homedir } from "node:os";
 import { spawn } from "node:child_process";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const toolchain = Object.fromEntries(readFileSync(join(root, ".toolchain-version"), "utf8").split(/\r?\n/).filter(Boolean).map((line) => line.split("=", 2)));
 const sdk = toolchain.wasm_sdk;
-const swift = process.env.SWIFT_EXEC ?? "swift";
+const installedSwift = join(homedir(), "Library/Developer/Toolchains", `${toolchain.swift_toolchain}.xctoolchain/usr/bin/swift`);
+const swift = process.env.SWIFT_EXEC ?? (existsSync(installedSwift) ? installedSwift : "swift");
 if (!sdk) throw new Error(".toolchain-version is missing wasm_sdk.");
 
 await new Promise((resolvePromise, reject) => {

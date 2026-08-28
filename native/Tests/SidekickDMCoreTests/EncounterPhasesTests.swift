@@ -65,4 +65,40 @@ final class EncounterPhasesTests: XCTestCase {
         XCTAssertEqual(packet.phases.first?.runningGuidance, "Move the captain to high ground")
         XCTAssertEqual(packet.budget.terrainAdjustment, 10)
     }
+
+    func testSharedCommandPersistsStructuredPhaseAndRejectsUnknownReferencesAtomically() throws {
+        let draft = EncounterDraft(
+            brief: EncounterBrief(party: PartySnapshot(effectiveLevel: 5, size: 4)),
+            participantGroups: [group()],
+            hazards: [hazard()]
+        )
+        let store = EncounterStore(draft: draft)
+        let first = phase("phase_1")
+        let firstPayload = try XCTUnwrap(try JSONSerialization.jsonObject(with: JSONEncoder().encode(first)) as? [String: Any])
+
+        try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_upsert_phase",
+            "phase": firstPayload,
+            "expected_revision": 0,
+            "origin": "gm"
+        ], in: store)
+
+        XCTAssertEqual(store.draft.revision, 1)
+        XCTAssertEqual(store.draft.structuredPhases?.first?.terrainChanges.first?.description, "Water rises")
+        XCTAssertEqual(store.draft.phases.first?.trigger, "When phase_1 begins")
+        XCTAssertEqual(store.budget.peakActiveXP, 48)
+
+        let invalid = phase("phase_2", participants: ["missing"])
+        let invalidPayload = try XCTUnwrap(try JSONSerialization.jsonObject(with: JSONEncoder().encode(invalid)) as? [String: Any])
+        let before = store.draft
+        XCTAssertThrowsError(try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_upsert_phase",
+            "phase": invalidPayload,
+            "expected_revision": 1,
+            "origin": "webmcp"
+        ], in: store)) { error in
+            XCTAssertEqual((error as? SidekickDomainError)?.code, "unknown_participant_reference")
+        }
+        XCTAssertEqual(store.draft, before)
+    }
 }

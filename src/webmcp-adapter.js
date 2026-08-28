@@ -8,6 +8,7 @@
 import { commitCustomCreature, forkExistingCreature, validateCustomCreature } from "./creature-generation.js";
 import { createSimpleHazard, hazardBenchmarks, validateSimpleHazard } from "./hazard-builder.js";
 import { benchmarkFor, CREATURE_ROADMAPS, recommendedBands } from "./creature-builder.js";
+import { projectRunSession } from "./run-session.js";
 
 export const PROTOCOL_VERSION = 1;
 export const TOOL_PREFIX = "sidekickdm_";
@@ -104,6 +105,25 @@ const catalogEntryInput = Object.freeze({
   },
   required: ["content_id"],
   additionalProperties: false
+});
+
+const libraryInput = Object.freeze({
+  type: "object",
+  properties: { kind: { type: "string", enum: ["encounters", "creatures"] } },
+  additionalProperties: false
+});
+
+const runInput = Object.freeze({
+  type: "object",
+  properties: { run_id: { type: "string", minLength: 1 } },
+  required: ["run_id"],
+  additionalProperties: false
+});
+
+const runMutationProperties = Object.freeze({
+  run_id: { type: "string", minLength: 1 },
+  expected_run_revision: { type: "integer", minimum: 0 },
+  combatant_id: { type: "string", minLength: 1 }
 });
 
 const revisionProperties = Object.freeze({
@@ -235,6 +255,8 @@ const READ_TOOL_DEFINITIONS = Object.freeze([
   definition(`${TOOL_PREFIX}get_creature_benchmarks`, "Read the official-style Creature Builder benchmark bands for a level.", creatureBenchmarkInput),
   definition(`${TOOL_PREFIX}get_hazard_benchmarks`, "Read the official-style Hazard Builder benchmark bands for a level and complexity.", hazardBenchmarkInput),
   definition(`${TOOL_PREFIX}preflight_generation`, "Estimate a Generation Run outline without mutating the Encounter Draft.", preflightInput, { untrusted: true })
+  ,definition(`${TOOL_PREFIX}list_library`, "List saved encounters or custom creatures in the Sidekick library.", libraryInput, { untrusted: true })
+  ,definition(`${TOOL_PREFIX}get_run_state`, "Read the active live encounter state, combatants, initiative, HP, conditions, and recent rolls.", runInput, { untrusted: true })
 ]);
 
 const WRITE_TOOL_DEFINITIONS = Object.freeze([
@@ -266,6 +288,16 @@ const WRITE_TOOL_DEFINITIONS = Object.freeze([
   writeDefinition(`${TOOL_PREFIX}set_alternative_resolutions`, "Set optional structured Alternative Resolutions in the Encounter Packet during an active Generation Run.", { ...revisionProperties, value: { type: "array", items: freeformObject } }, generationMutationRequired(["value"])),
   writeDefinition(`${TOOL_PREFIX}undo`, "Undo the most recent authored mutation or complete finished Generation Run.", { encounter_id: revisionProperties.encounter_id, expected_encounter_revision: revisionProperties.expected_encounter_revision }, ["encounter_id", "expected_encounter_revision"]),
   writeDefinition(`${TOOL_PREFIX}redo`, "Redo the most recently undone mutation.", { encounter_id: revisionProperties.encounter_id, expected_encounter_revision: revisionProperties.expected_encounter_revision }, ["encounter_id", "expected_encounter_revision"])
+  ,writeDefinition(`${TOOL_PREFIX}save_custom_creature`, "Validate and save a creature to the reusable custom creature library without adding it to an encounter.", { creature: freeformObject }, ["creature"])
+  ,writeDefinition(`${TOOL_PREFIX}save_encounter`, "Save the active Encounter Draft to the encounter library.", { encounter_id: { type: "string", minLength: 1 } }, ["encounter_id"])
+  ,writeDefinition(`${TOOL_PREFIX}start_run`, "Start or resume live encounter tracking for the active Encounter.", { encounter_id: { type: "string", minLength: 1 } }, ["encounter_id"])
+  ,writeDefinition(`${TOOL_PREFIX}set_initiative`, "Set one combatant's initiative in the active live encounter.", { ...runMutationProperties, value: { type: "integer" } }, ["run_id", "expected_run_revision", "combatant_id", "value"])
+  ,writeDefinition(`${TOOL_PREFIX}advance_turn`, "Advance to the next combatant and increment the round after the final turn.", { run_id: runMutationProperties.run_id, expected_run_revision: runMutationProperties.expected_run_revision }, ["run_id", "expected_run_revision"])
+  ,writeDefinition(`${TOOL_PREFIX}apply_damage`, "Apply damage to one live combatant without changing its library or Encounter statistics.", { ...runMutationProperties, amount: { type: "integer", minimum: 0 } }, ["run_id", "expected_run_revision", "combatant_id", "amount"])
+  ,writeDefinition(`${TOOL_PREFIX}apply_healing`, "Apply healing to one live combatant, capped at its maximum HP.", { ...runMutationProperties, amount: { type: "integer", minimum: 0 } }, ["run_id", "expected_run_revision", "combatant_id", "amount"])
+  ,writeDefinition(`${TOOL_PREFIX}add_condition`, "Add or update a named condition on one live combatant.", { ...runMutationProperties, name: { type: "string", minLength: 1 }, value: { type: ["integer", "null"], minimum: 0 } }, ["run_id", "expected_run_revision", "combatant_id", "name"])
+  ,writeDefinition(`${TOOL_PREFIX}remove_condition`, "Remove a named condition from one live combatant.", { ...runMutationProperties, name: { type: "string", minLength: 1 } }, ["run_id", "expected_run_revision", "combatant_id", "name"])
+  ,writeDefinition(`${TOOL_PREFIX}roll`, "Roll a supported dice expression and append the result to the live encounter log.", { ...runMutationProperties, label: { type: "string", minLength: 1 }, expression: { type: "string", minLength: 2 } }, ["run_id", "expected_run_revision", "label", "expression"])
 ]);
 
 const TOOL_DEFINITIONS = Object.freeze([...READ_TOOL_DEFINITIONS, ...WRITE_TOOL_DEFINITIONS]);
@@ -787,7 +819,9 @@ function capabilities(catalog, state) {
       custom_complex_hazards: false,
       custom_spellcasting: false,
       alternative_resolutions: true,
-      map_attachments: true
+      map_attachments: true,
+      reusable_library: true,
+      live_encounter_tracking: true
     },
     catalog: {
       fixture_version: optionalNumber(firstDefined(fixture.fixture_version, fixture.fixtureVersion)),
@@ -866,8 +900,9 @@ function validateSchemaValue(value, schema, path) {
 
 const MUTATION_NAMES = new Set(TOOL_DEFINITIONS.filter(definition => !definition.readOnlyHint).map(definition => definition.name));
 const SETUP_MUTATIONS = new Set([`${TOOL_PREFIX}create_encounter`, `${TOOL_PREFIX}set_party_snapshot`, `${TOOL_PREFIX}set_threat_target`]);
-const AGENT_CONSTRAINT_MUTATIONS = new Set([...MUTATION_NAMES].filter(name => !new Set([...SETUP_MUTATIONS, `${TOOL_PREFIX}cancel_generation`, `${TOOL_PREFIX}apply_targeted_revision`, `${TOOL_PREFIX}undo`, `${TOOL_PREFIX}redo`]).has(name)));
-const GENERATION_MUTATIONS = new Set([...MUTATION_NAMES].filter(name => !new Set([...SETUP_MUTATIONS, `${TOOL_PREFIX}begin_generation`, `${TOOL_PREFIX}resume_generation`, `${TOOL_PREFIX}cancel_generation`, `${TOOL_PREFIX}apply_targeted_revision`, `${TOOL_PREFIX}undo`, `${TOOL_PREFIX}redo`]).has(name)));
+const INDEPENDENT_MUTATIONS = new Set(["save_custom_creature", "save_encounter", "start_run", "set_initiative", "advance_turn", "apply_damage", "apply_healing", "add_condition", "remove_condition", "roll"].map(name => `${TOOL_PREFIX}${name}`));
+const AGENT_CONSTRAINT_MUTATIONS = new Set([...MUTATION_NAMES].filter(name => !new Set([...SETUP_MUTATIONS, ...INDEPENDENT_MUTATIONS, `${TOOL_PREFIX}cancel_generation`, `${TOOL_PREFIX}apply_targeted_revision`, `${TOOL_PREFIX}undo`, `${TOOL_PREFIX}redo`]).has(name)));
+const GENERATION_MUTATIONS = new Set([...MUTATION_NAMES].filter(name => !new Set([...SETUP_MUTATIONS, ...INDEPENDENT_MUTATIONS, `${TOOL_PREFIX}begin_generation`, `${TOOL_PREFIX}resume_generation`, `${TOOL_PREFIX}cancel_generation`, `${TOOL_PREFIX}apply_targeted_revision`, `${TOOL_PREFIX}undo`, `${TOOL_PREFIX}redo`]).has(name)));
 const RUN_BOUND_MUTATIONS = new Set([...GENERATION_MUTATIONS, `${TOOL_PREFIX}resume_generation`, `${TOOL_PREFIX}cancel_generation`]);
 
 function validateToolInput(name, input) {
@@ -879,6 +914,7 @@ function validateToolInput(name, input) {
 
 function validateMutationPreconditions(name, input, state) {
   if (!MUTATION_NAMES.has(name)) return;
+  if (INDEPENDENT_MUTATIONS.has(name)) return;
   if (name === `${TOOL_PREFIX}create_encounter`) {
     if (state.generationRunID) throw Object.assign(new Error("Finish or cancel the active Generation Run before replacing the Encounter Draft."), { code: "manual_write_locked" });
     return;
@@ -947,8 +983,24 @@ export function createWebMCPAdapter(options = {}) {
     const next = unwrap(result);
     if (!result?.ok) return envelope(next, undefined, errorPayload(result));
     if (source.engine && result.snapshot) source.engine.snapshot = result.snapshot;
-    if (typeof source.onMutation === "function") await source.onMutation(requireDraft(next), result);
+    if (typeof source.onMutation === "function") await source.onMutation(requireDraft(next), result, command);
     return envelope(next, project(next, result));
+  }
+
+  async function readRun(input) {
+    if (typeof source.getRunSession !== "function") throw Object.assign(new Error("Live encounter tracking is not available."), { code: "run_unavailable" });
+    const session = await source.getRunSession();
+    if (!session) throw Object.assign(new Error("There is no active live encounter."), { code: "no_active_run" });
+    if (input.run_id !== session.id) throw Object.assign(new Error("That live encounter is no longer active."), { code: "unknown_run", details: { run_id: input.run_id, active_run_id: session.id } });
+    return session;
+  }
+
+  async function executeRunAction(input, action) {
+    const session = await readRun(input);
+    if (input.expected_run_revision !== session.revision) throw Object.assign(new Error("The live encounter changed before this action was applied."), { code: "stale_run_revision", details: { expected_run_revision: input.expected_run_revision, current_run_revision: session.revision } });
+    if (typeof source.runAction !== "function") throw Object.assign(new Error("Live encounter mutations are not available."), { code: "run_unavailable" });
+    const next = await source.runAction(action);
+    return envelope(await readState(), projectRunSession(next));
   }
 
   function mutationCommand(name, input, additions = {}) {
@@ -1000,6 +1052,47 @@ export function createWebMCPAdapter(options = {}) {
         case `${TOOL_PREFIX}preflight_generation`:
           checkEncounter(state, input);
           return envelope(state, projectPreflight(state.snapshot, requireDraft(state), input));
+        case `${TOOL_PREFIX}list_library`: {
+          if (typeof source.getLibrary !== "function") throw Object.assign(new Error("The reusable library is not available."), { code: "library_unavailable" });
+          const library = clone(await source.getLibrary());
+          if (input.kind === "encounters") return envelope(state, { encounters: array(library.encounters) });
+          if (input.kind === "creatures") return envelope(state, { creatures: array(library.creatures) });
+          return envelope(state, { encounters: array(library.encounters), creatures: array(library.creatures) });
+        }
+        case `${TOOL_PREFIX}get_run_state`:
+          return envelope(state, projectRunSession(await readRun(input)));
+        case `${TOOL_PREFIX}save_custom_creature`: {
+          if (typeof source.saveLibraryCreature !== "function") throw Object.assign(new Error("The custom creature library is not available."), { code: "library_unavailable" });
+          const creature = commitCustomCreature(keysToCamel(input.creature), { origin: "webmcp" });
+          await source.saveLibraryCreature(creature);
+          return envelope(state, { creature: keysToSnake(creature), validation: validateCustomCreature(creature), ui_target: { kind: "library_creature", id: creature.id, label: creature.identity?.name ?? creature.id } });
+        }
+        case `${TOOL_PREFIX}save_encounter`: {
+          checkEncounter(state, input);
+          if (typeof source.saveEncounter !== "function") throw Object.assign(new Error("The encounter library is not available."), { code: "library_unavailable" });
+          const encounter = requireDraft(state);
+          await source.saveEncounter(encounter);
+          return envelope(state, { encounter_id: encounter.id, saved_revision: state.encounterRevision, ui_target: { kind: "library_encounter", id: encounter.id, label: encounter.title } });
+        }
+        case `${TOOL_PREFIX}start_run`: {
+          checkEncounter(state, input);
+          if (typeof source.startRun !== "function") throw Object.assign(new Error("Live encounter tracking is not available."), { code: "run_unavailable" });
+          return envelope(state, projectRunSession(await source.startRun(requireDraft(state))));
+        }
+        case `${TOOL_PREFIX}set_initiative`:
+          return await executeRunAction(input, { type: "set_initiative", combatantID: input.combatant_id, value: input.value });
+        case `${TOOL_PREFIX}advance_turn`:
+          return await executeRunAction(input, { type: "next_turn" });
+        case `${TOOL_PREFIX}apply_damage`:
+          return await executeRunAction(input, { type: "apply_damage", combatantID: input.combatant_id, amount: input.amount });
+        case `${TOOL_PREFIX}apply_healing`:
+          return await executeRunAction(input, { type: "apply_healing", combatantID: input.combatant_id, amount: input.amount });
+        case `${TOOL_PREFIX}add_condition`:
+          return await executeRunAction(input, { type: "add_condition", combatantID: input.combatant_id, name: input.name, value: input.value });
+        case `${TOOL_PREFIX}remove_condition`:
+          return await executeRunAction(input, { type: "remove_condition", combatantID: input.combatant_id, name: input.name });
+        case `${TOOL_PREFIX}roll`:
+          return await executeRunAction(input, { type: "roll", combatantID: input.combatant_id ?? null, label: input.label, expression: input.expression });
         case `${TOOL_PREFIX}create_encounter`:
         case `${TOOL_PREFIX}set_party_snapshot`:
         case `${TOOL_PREFIX}set_threat_target`:

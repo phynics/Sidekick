@@ -15,6 +15,7 @@ for (const file of [
   "src/npc-profile.js",
   "src/encounter-phases.js",
   "src/generation-run.js",
+  "src/run-session.js",
   "src/webmcp-adapter.js"
 ]) {
   await new Promise((resolve, reject) => {

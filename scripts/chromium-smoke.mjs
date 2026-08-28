@@ -9,11 +9,15 @@ import { createSidekickDMZip } from "../src/encounter-file.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const dist = join(root, "dist");
+const requestedBasePath = process.env.SIDEKICK_BASE_PATH ?? "/";
+const basePath = `/${requestedBasePath.replace(/^\/+|\/+$/g, "")}${requestedBasePath === "/" ? "" : "/"}`;
 const toolchain = Object.fromEntries(readFileSync(join(root, ".toolchain-version"), "utf8").split(/\r?\n/).filter(Boolean).map((line) => line.split("=", 2)));
 const contentTypes = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".wasm": "application/wasm" };
 
 const server = createServer(async (request, response) => {
-  const requestPath = decodeURIComponent(new URL(request.url, "http://localhost").pathname).replace(/^\/+/, "") || "index.html";
+  const pathname = decodeURIComponent(new URL(request.url, "http://localhost").pathname);
+  if (!pathname.startsWith(basePath)) { response.writeHead(404).end(); return; }
+  const requestPath = pathname.slice(basePath.length).replace(/^\/+/, "") || "index.html";
   const file = resolve(dist, requestPath);
   const outside = relative(dist, file);
   if (outside.startsWith("..") || isAbsolute(outside)) { response.writeHead(404).end(); return; }
@@ -27,7 +31,7 @@ const server = createServer(async (request, response) => {
 
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const address = server.address();
-const pageURL = `http://127.0.0.1:${address.port}/`;
+const pageURL = `http://127.0.0.1:${address.port}${basePath}`;
 const chromeCandidates = [
   process.env.CHROMIUM_BIN,
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -80,7 +84,8 @@ try {
   const unexpectedStaticRequests = () => [...networkRequests].filter((requestURL) => {
     const parsed = new URL(requestURL);
     if (parsed.origin !== new URL(pageURL).origin) return true;
-    return !(parsed.pathname === "/" || parsed.pathname === "/index.html" || parsed.pathname === "/styles.css" || parsed.pathname === "/favicon.ico" || parsed.pathname.startsWith("/src/") || parsed.pathname.startsWith("/public/"));
+    const path = parsed.pathname.slice(basePath.length - 1);
+    return !(parsed.pathname === basePath || parsed.pathname === "/favicon.ico" || path === "/index.html" || path === "/styles.css" || path === "/favicon.ico" || path.startsWith("/src/") || path.startsWith("/public/"));
   });
   await command("Network.enable");
   await command("Page.navigate", { url: pageURL });
@@ -123,16 +128,48 @@ try {
   await waitFor(async () => await evaluate("document.readyState"), "complete");
   await waitFor(async () => await evaluate("Boolean(globalThis.sidekickDM?.engine?.snapshot?.encounter)"), true);
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=participant-group_1]') !== null"), true);
-  await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "80 XP");
+  const runPacketSurface = await evaluate("(() => { const trigger = document.querySelector('[data-modal-open=run]'); trigger?.click(); const dialog = document.querySelector('[data-modal=run]'); return { trigger: Boolean(trigger), open: Boolean(dialog?.open), view: Boolean(dialog?.querySelector('[data-testid=run-packet-view]')), authoringButtons: [...(dialog?.querySelectorAll('button') ?? [])].some(button => button.textContent.includes('Save Identity')), printButton: [...(dialog?.querySelectorAll('button') ?? [])].some(button => button.textContent.trim() === 'Print packet') }; })()");
+  if (!runPacketSurface.trigger || !runPacketSurface.open || !runPacketSurface.view || runPacketSurface.authoringButtons || !runPacketSurface.printButton) throw new Error(`Run packet did not open a focused run-facing view: ${JSON.stringify(runPacketSurface)}`);
+  await evaluate("document.querySelector('[data-modal=run] [data-modal-close]').click()");
+  const menuDismissal = await evaluate("(() => { const menu = document.querySelector('.command-controls .action-menu'); menu.open = true; document.querySelector('h1').click(); return { openAfterOutsideClick: menu.open, editPacketAction: [...menu.querySelectorAll('button')].some(button => button.textContent.trim() === 'Edit packet') }; })()");
+  if (menuDismissal.openAfterOutsideClick || !menuDismissal.editPacketAction) throw new Error(`Encounter action menu did not dismiss or expose packet authoring separately: ${JSON.stringify(menuDismissal)}`);
   await evaluate("const f = document.querySelector('[data-action=search-catalog]'); f.elements.query.value = 'orc'; f.requestSubmit();");
   await waitFor(async () => await evaluate("document.querySelector('[data-catalog-add=\"creature/monster-core/orc-veteran/current\"]') !== null"), true);
   await evaluate("document.querySelector('[data-catalog-add=\"creature/monster-core/orc-veteran/current\"]').click()");
-  await waitFor(async () => await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.participantGroups.some(group => group.contentID === 'creature/monster-core/orc-veteran/current')"), true).catch(async error => { throw new Error(`${error.message} Catalog notice: ${await evaluate("document.querySelector('[data-testid=notice]')?.textContent.trim()")}; revision: ${await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.revision")}`); });
+  await waitFor(async () => await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.participantGroups.some(group => group.contentID === 'creature/monster-core/orc-veteran/current')"), true).catch(async error => { throw new Error(`${error.message} Catalog notice: ${await evaluate("document.querySelector('[data-testid=notice]')?.textContent.trim()")} revision: ${await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.revision")}`); });
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "90 XP");
   await evaluate("const s = document.querySelector('[data-catalog-component=group_2][data-catalog-field=adjustment]'); s.value = 'elite'; s.dispatchEvent(new Event('change', { bubbles: true }))");
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "95 XP");
   const catalogCreatureLedger = await evaluate("({ count: document.querySelector('[data-testid=creature-count-group_2]')?.textContent.trim(), xp: document.querySelector('[data-testid=creature-xp-group_2]')?.textContent.trim(), attacks: document.querySelector('[data-testid=creature-attacks-group_2]')?.textContent.trim(), features: document.querySelector('[data-testid=creature-features-group_2]')?.textContent.trim() })");
   if (catalogCreatureLedger.count !== "×1" || catalogCreatureLedger.xp !== "15 XP" || !catalogCreatureLedger.attacks || !catalogCreatureLedger.features) throw new Error(`Creature ledger did not emphasize count and XP or list mechanics: ${JSON.stringify(catalogCreatureLedger)}`);
+  const workspaceBeforeStart = await evaluate("(() => { document.querySelector('[data-mode=library]').click(); const library = { visible: getComputedStyle(document.querySelector('[data-testid=library-workspace]')).display !== 'none', encounters: document.querySelectorAll('[data-library-select-record]').length, preview: Boolean(document.querySelector('[data-testid=library-preview]')) }; document.querySelector('[data-mode=run]').click(); return { library, beforeStart: { combatants: document.querySelectorAll('[data-run-select]').length, start: Boolean(document.querySelector('[data-start-encounter]')) } }; })()");
+  await evaluate("document.querySelector('[data-start-encounter]').click()");
+  await waitFor(async () => await evaluate("document.querySelectorAll('[data-run-select]').length >= 3"), true);
+  const workspaceRun = await evaluate("({ visible: getComputedStyle(document.querySelector('[data-testid=run-workspace]')).display !== 'none', combatants: document.querySelectorAll('[data-run-select]').length, sheet: document.querySelector('.combatant-sheet h2')?.textContent.trim() })");
+  const workspaceModes = { ...workspaceBeforeStart, run: workspaceRun };
+  if (!workspaceModes.library.visible || workspaceModes.library.encounters < 1 || !workspaceModes.library.preview || workspaceModes.beforeStart.combatants !== 0 || !workspaceModes.beforeStart.start || !workspaceModes.run.visible || workspaceModes.run.combatants < 3 || !workspaceModes.run.sheet) throw new Error(`Library, Build, and explicit Run start failed: ${JSON.stringify(workspaceModes)}`);
+  const shelfFlow = await evaluate("(() => { const shelf = document.querySelector('[data-testid=agent-shelf]'); const initial = shelf?.className; const status = document.querySelector('[data-testid=webmcp-status]')?.textContent; document.querySelector('[data-agent-dismiss]')?.click(); const dismissed = document.querySelector('[data-testid=agent-shelf]')?.classList.contains('is-dismissed'); document.querySelector('.sidekick-toggle')?.click(); const recalled = document.querySelector('[data-testid=agent-shelf]')?.classList.contains('is-compact'); document.querySelector('[data-agent-expand]')?.click(); const expanded = document.querySelector('[data-testid=agent-shelf]')?.classList.contains('is-expanded'); return { initial, status, dismissed, recalled, expanded }; })()");
+  const expectedInitialShelf = shelfFlow.status?.includes("connected") ? shelfFlow.initial?.includes("is-compact") : shelfFlow.initial?.includes("is-dismissed");
+  if (!expectedInitialShelf || !shelfFlow.dismissed || !shelfFlow.recalled || !shelfFlow.expanded) throw new Error(`Sidekick shelf could not dismiss, recall, and expand: ${JSON.stringify(shelfFlow)}`);
+  const runCombatantID = await evaluate("[...document.querySelectorAll('.initiative-entry [data-run-select]')].find(entry => entry.textContent.includes('Orc Veteran'))?.dataset.runSelect");
+  if (!runCombatantID) throw new Error(`Live run did not expose the catalog creature: ${JSON.stringify(await evaluate("[...document.querySelectorAll('.initiative-entry [data-run-select]')].map(entry => ({ id: entry.dataset.runSelect, text: entry.textContent.trim() }))"))}`);
+  await evaluate(`(() => { const initiative = document.querySelector('[data-run-initiative="${runCombatantID}"]'); initiative.value = '22'; initiative.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await waitFor(async () => await evaluate(`document.querySelector('[data-run-initiative="${runCombatantID}"]')?.value`), "22");
+  await evaluate("document.querySelector('[data-run-action=next_turn]').click()");
+  await waitFor(async () => await evaluate("document.querySelector('.initiative-entry.is-active strong')?.textContent.trim()"), "Orc Veteran");
+  await evaluate(`document.querySelector('[data-run-select="${runCombatantID}"]').click()`);
+  await waitFor(async () => await evaluate("document.querySelector('.combatant-sheet h2')?.textContent.trim()"), "Orc Veteran");
+  const hpBefore = await evaluate("Number(document.querySelector('.hp-display strong')?.textContent)");
+  await evaluate("(() => { const amount = document.querySelector('[data-run-hp-form] input[name=amount]'); amount.value = '7'; document.querySelector('[data-run-hp-form] button[value=damage]').click(); })()");
+  await waitFor(async () => await evaluate("Number(document.querySelector('.hp-display strong')?.textContent)"), hpBefore - 7);
+  await evaluate("(() => { const condition = document.querySelector('[data-run-condition-form]'); condition.elements.name.value = 'frightened'; condition.elements.value.value = '1'; condition.requestSubmit(); })()");
+  await waitFor(async () => Boolean((await evaluate("document.querySelector('.condition-chip')?.textContent.trim()"))?.includes("frightened 1")), true);
+  await evaluate("document.querySelector('[data-run-roll]').click()");
+  await waitFor(async () => Boolean(await evaluate("document.querySelector('.roll-log .log-roll')?.textContent.trim()")), true);
+  const runInteraction = await evaluate(`({ combatantID: "${runCombatantID}", active: document.querySelector('.initiative-entry.is-active strong')?.textContent, hpBefore: ${hpBefore}, hpAfter: Number(document.querySelector('.hp-display strong')?.textContent), condition: document.querySelector('.condition-chip')?.textContent, roll: document.querySelector('.roll-log .log-roll')?.textContent })`);
+  if (!runInteraction.combatantID || !runInteraction.active || runInteraction.hpAfter !== runInteraction.hpBefore - 7 || !runInteraction.condition?.includes("frightened 1") || !runInteraction.roll) throw new Error(`Live run interaction failed: ${JSON.stringify(runInteraction)}`);
+  await evaluate("document.querySelector('[data-mode=build]').click()");
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "95 XP");
   const collapsedCreatureManager = await evaluate("(() => { const card = document.querySelector('[data-testid=participant-group_2]'); const manager = card?.querySelector('.creature-manager'); return { open: manager?.open, summary: manager?.querySelector('summary')?.textContent.trim() }; })()");
   if (collapsedCreatureManager.open || collapsedCreatureManager.summary !== "Manage creature") throw new Error(`Creature editing competed with run-facing mechanics: ${JSON.stringify(collapsedCreatureManager)}`);
   await evaluate("document.querySelector('[data-testid=participant-group_2] .creature-manager').open = true");
@@ -140,6 +177,8 @@ try {
   await command("Emulation.setDeviceMetricsOverride", { width: 720, height: 900, deviceScaleFactor: 1, mobile: false });
   const narrowLedger = await evaluate("(() => { const card = document.querySelector('[data-testid=participant-group_2]'); const impact = card?.querySelector('.creature-impact'); const identity = card?.querySelector('.creature-identity'); if (!card || !impact || !identity) return null; const impactRect = impact.getBoundingClientRect(); const identityRect = identity.getBoundingClientRect(); return { impactWidth: Math.round(impactRect.width), cardWidth: Math.round(card.getBoundingClientRect().width), impactBelowIdentity: impactRect.top >= identityRect.bottom - 1 }; })()");
   if (!narrowLedger || narrowLedger.impactWidth >= narrowLedger.cardWidth * 0.7 || !narrowLedger.impactBelowIdentity) throw new Error(`Creature impact controls did not reflow at narrow width: ${JSON.stringify(narrowLedger)}`);
+  const mobileShelf = await evaluate("(() => { const shelf = document.querySelector('[data-testid=agent-shelf]'); const rect = shelf?.getBoundingClientRect(); return rect ? { left: Math.round(rect.left), right: Math.round(rect.right), bottom: Math.round(rect.bottom), viewport: innerWidth, height: innerHeight } : null; })()");
+  if (!mobileShelf || mobileShelf.left < 0 || mobileShelf.right > mobileShelf.viewport || mobileShelf.bottom > mobileShelf.height) throw new Error(`Sidekick shelf escaped the mobile viewport: ${JSON.stringify(mobileShelf)}`);
   await command("Emulation.clearDeviceMetricsOverride");
   await command("Page.reload");
   await waitFor(async () => await evaluate("document.readyState"), "complete");
@@ -181,6 +220,9 @@ try {
   await waitFor(async () => await evaluate(`document.querySelector('[data-testid=participant-${originalParticipantID}]')?.textContent.includes('Mire Scout')`), true);
   const originalCreatureLedger = await evaluate(`({ count: document.querySelector('[data-testid=creature-count-${originalParticipantID}]')?.textContent.trim(), xp: document.querySelector('[data-testid=creature-xp-${originalParticipantID}]')?.textContent.trim(), attacks: document.querySelector('[data-testid=creature-attacks-${originalParticipantID}]')?.textContent.trim(), features: document.querySelector('[data-testid=creature-features-${originalParticipantID}]')?.textContent.trim() })`);
   if (originalCreatureLedger.count !== "×1" || originalCreatureLedger.xp !== "40 XP" || !originalCreatureLedger.attacks.includes("Spear") || !originalCreatureLedger.features.includes("No special features recorded")) throw new Error(`Original Creature ledger projection failed: ${JSON.stringify(originalCreatureLedger)}`);
+  const editCreatureLabel = await evaluate(`(() => { document.querySelector('[data-testid=participant-${originalParticipantID}] .creature-manager').open = true; document.querySelector('[data-testid=participant-${originalParticipantID}] [data-creature-edit]').click(); return document.querySelector('#creature-builder-root [data-action=add]')?.textContent.trim(); })()`);
+  if (editCreatureLabel !== "Save changes") throw new Error(`Existing Creature editor used the wrong completion label: ${editCreatureLabel}`);
+  await evaluate("document.querySelector('[data-modal=creature] [data-modal-close]').click()");
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "135 XP");
   await evaluate(`(async () => { const values = { name: "Mire Bell Snare", traits: "mechanical", description: "A submerged chain catches trespassers.", detection: "18", disableMethods: "Thievery|17", trigger: "A creature crosses the chain.", effect: "The chain knocks the creature prone.", reset: "Reset the chain in ten minutes.", participation: "conditional", participationCondition: "When the bell tolls." }; for (const [key, value] of Object.entries(values)) { const field = document.querySelector('#hazard-builder-root [data-field="' + key + '"]'); field.value = value; field.dispatchEvent(new Event('change', { bubbles: true })); await new Promise(requestAnimationFrame); } })()`);
   await waitFor(async () => await evaluate("document.querySelector('#hazard-builder-root [data-action=add]')?.disabled"), false);
@@ -246,7 +288,7 @@ try {
   writeFileSync(encounterZipPath, createSidekickDMZip({ manifest: portableRaw }));
   await setFileInput('[data-action="import-encounter-zip"]', encounterZipPath);
   await waitFor(async () => (await evaluate("document.querySelector('[data-testid=notice]')?.textContent.trim()"))?.startsWith("Encounter ZIP imported"), true);
-  const persistedZipImport = await evaluate(`(async () => { const db = await new Promise((resolve, reject) => { const request = indexedDB.open("sidekick-dm", 2); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); return await new Promise((resolve, reject) => { const request = db.transaction(["encounters"], "readonly").objectStore("encounters").get("current"); request.onsuccess = () => resolve(request.result ?? null); request.onerror = () => reject(request.error); }); })()`);
+  const persistedZipImport = await evaluate(`(async () => { const db = await new Promise((resolve, reject) => { const request = indexedDB.open("sidekick-dm", 3); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); return await new Promise((resolve, reject) => { const request = db.transaction(["encounters"], "readonly").objectStore("encounters").get("current"); request.onsuccess = () => resolve(request.result ?? null); request.onerror = () => reject(request.error); }); })()`);
   const zipEngineID = await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.id");
   if (!persistedZipImport || persistedZipImport.id !== zipEngineID) throw new Error("Accepted Encounter ZIP was not persisted under the current key after native engine acceptance.");
   await evaluate("document.querySelector('[data-action=import-encounter-zip]').value = ''");
@@ -256,10 +298,10 @@ try {
   writeFileSync(invalidEncounterZipPath, createSidekickDMZip({ manifest: JSON.stringify(invalidArchiveRoot) }));
   await setFileInput('[data-action="import-encounter-zip"]', invalidEncounterZipPath);
   await waitFor(async () => (await evaluate("document.querySelector('[data-testid=notice]')?.textContent.trim()"))?.includes("invalid"), true);
-  const rejectedZipImport = await evaluate(`(async () => { const db = await new Promise((resolve, reject) => { const request = indexedDB.open("sidekick-dm", 2); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); return await new Promise((resolve, reject) => { const request = db.transaction(["encounters"], "readonly").objectStore("encounters").get("current"); request.onsuccess = () => resolve(request.result ?? null); request.onerror = () => reject(request.error); }); })()`);
+  const rejectedZipImport = await evaluate(`(async () => { const db = await new Promise((resolve, reject) => { const request = indexedDB.open("sidekick-dm", 3); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); return await new Promise((resolve, reject) => { const request = db.transaction(["encounters"], "readonly").objectStore("encounters").get("current"); request.onsuccess = () => resolve(request.result ?? null); request.onerror = () => reject(request.error); }); })()`);
   const rejectedZipEngineID = await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.id");
   if (!rejectedZipImport || rejectedZipImport.id !== zipEngineID || rejectedZipEngineID !== zipEngineID) throw new Error("Rejected Encounter ZIP changed the native engine or current IndexedDB record before acceptance.");
-  const componentsRaw = await evaluate(`(async () => { const { createComponentsFile } = await import("./src/encounter-file.js"); const draft = globalThis.sidekickDM.engine.snapshot.encounter; const db = await new Promise((resolve, reject) => { const request = indexedDB.open("sidekick-dm", 2); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); const tx = db.transaction(["npc_profiles"], "readonly"); const profiles = await new Promise((resolve, reject) => { const request = tx.objectStore("npc_profiles").getAll(); request.onsuccess = () => resolve(request.result ?? []); request.onerror = () => reject(request.error); }); return createComponentsFile({ components: { creatures: draft.originalCreatures ?? [], npcProfiles: profiles, hazards: draft.customHazards ?? [] } }); })()`);
+  const componentsRaw = await evaluate(`(async () => { const { createComponentsFile } = await import("./src/encounter-file.js"); const draft = globalThis.sidekickDM.engine.snapshot.encounter; const db = await new Promise((resolve, reject) => { const request = indexedDB.open("sidekick-dm", 3); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); const tx = db.transaction(["npc_profiles"], "readonly"); const profiles = await new Promise((resolve, reject) => { const request = tx.objectStore("npc_profiles").getAll(); request.onsuccess = () => resolve(request.result ?? []); request.onerror = () => reject(request.error); }); return createComponentsFile({ components: { creatures: draft.originalCreatures ?? [], npcProfiles: profiles, hazards: draft.customHazards ?? [] } }); })()`);
   const componentsPath = join(transferData, "components.sidekickdm.json");
   writeFileSync(componentsPath, componentsRaw, "utf8");
   await setFileInput('[data-action="import-components"]', componentsPath);
@@ -271,7 +313,7 @@ try {
   await evaluate("document.querySelector('[data-action=import-components]').value = ''");
   await setFileInput('[data-action="import-components"]', componentsPath);
   await waitFor(async () => (await evaluate("document.querySelector('[data-testid=notice]')?.textContent.trim()"))?.includes("remapped ID(s)"), true);
-  const libraryRaw = await evaluate(`(async () => { const { createLibraryFile } = await import("./src/encounter-file.js"); const db = await new Promise((resolve, reject) => { const request = indexedDB.open("sidekick-dm", 2); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); const names = ["encounters", "creatures", "npc_profiles", "hazards"]; const tx = db.transaction(names, "readonly"); const getAll = name => new Promise((resolve, reject) => { const request = tx.objectStore(name).getAll(); request.onsuccess = () => resolve(request.result ?? []); request.onerror = () => reject(request.error); }); const [encounters, creatures, npcProfiles, hazards] = await Promise.all(names.map(getAll)); const unique = records => [...new Map(records.filter(record => record?.id).map(record => [record.id, record])).values()]; return createLibraryFile({ library: { encounters: unique(encounters), creatures: unique(creatures), npcProfiles: unique(npcProfiles), hazards: unique(hazards) } }); })()`);
+  const libraryRaw = await evaluate(`(async () => { const { createLibraryFile } = await import("./src/encounter-file.js"); const db = await new Promise((resolve, reject) => { const request = indexedDB.open("sidekick-dm", 3); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); const names = ["encounters", "creatures", "npc_profiles", "hazards"]; const tx = db.transaction(names, "readonly"); const getAll = name => new Promise((resolve, reject) => { const request = tx.objectStore(name).getAll(); request.onsuccess = () => resolve(request.result ?? []); request.onerror = () => reject(request.error); }); const [encounters, creatures, npcProfiles, hazards] = await Promise.all(names.map(getAll)); const unique = records => [...new Map(records.filter(record => record?.id).map(record => [record.id, record])).values()]; return createLibraryFile({ library: { encounters: unique(encounters), creatures: unique(creatures), npcProfiles: unique(npcProfiles), hazards: unique(hazards) } }); })()`);
   const libraryPath = join(transferData, "library.sidekickdm.json");
   writeFileSync(libraryPath, libraryRaw, "utf8");
   await setFileInput('[data-action="import-library"]', libraryPath);
@@ -296,7 +338,7 @@ try {
   writeFileSync(libraryZipPath, createSidekickDMZip({ manifest: libraryRaw }));
   await setFileInput('[data-action="import-library-zip"]', libraryZipPath);
   await waitFor(async () => (await evaluate("document.querySelector('[data-testid=notice]')?.textContent.trim()"))?.startsWith("Library ZIP imported"), true);
-  const transferredCounts = await evaluate(`(async () => { const db = await new Promise((resolve, reject) => { const request = indexedDB.open("sidekick-dm", 2); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); const names = ["encounters", "creatures", "npc_profiles", "hazards"]; const counts = {}; const tx = db.transaction(names, "readonly"); await Promise.all(names.map(name => new Promise((resolve, reject) => { const request = tx.objectStore(name).count(); request.onsuccess = () => { counts[name] = request.result; resolve(); }; request.onerror = () => reject(request.error); }))); return counts; })()`);
+  const transferredCounts = await evaluate(`(async () => { const db = await new Promise((resolve, reject) => { const request = indexedDB.open("sidekick-dm", 3); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); const names = ["encounters", "creatures", "npc_profiles", "hazards"]; const counts = {}; const tx = db.transaction(names, "readonly"); await Promise.all(names.map(name => new Promise((resolve, reject) => { const request = tx.objectStore(name).count(); request.onsuccess = () => { counts[name] = request.result; resolve(); }; request.onerror = () => reject(request.error); }))); return counts; })()`);
   if ((transferredCounts?.creatures ?? 0) < 1 || (transferredCounts?.npc_profiles ?? 0) < 1 || (transferredCounts?.hazards ?? 0) < 1 || (transferredCounts?.encounters ?? 0) < 1) throw new Error(`Component/library transfer did not persist records: ${JSON.stringify(transferredCounts)}`);
 
   const runCall = (tool, fields = {}) => evaluate(`(async () => { const snapshot = globalThis.sidekickDM.engine.snapshot; return globalThis.sidekickDM.webMCP.execute(${JSON.stringify(tool)}, ${JSON.stringify(fields)}); })()`);

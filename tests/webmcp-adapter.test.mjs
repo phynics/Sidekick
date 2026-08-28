@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { CatalogIndex } from "../src/catalog-index.js";
 import { createEmptyOriginalCreature } from "../src/creature-builder.js";
 import { createWebMCPAdapter, toolDefinitions } from "../src/webmcp-adapter.js";
+import { applyRunAction, createRunSession, projectRunSession } from "../src/run-session.js";
 
 const catalogFixture = {
   fixture_version: 1,
@@ -312,7 +313,9 @@ test("returns compact version 1 projections with current revisions", async () =>
         custom_complex_hazards: false,
         custom_spellcasting: false,
         alternative_resolutions: true,
-        map_attachments: true
+        map_attachments: true,
+        reusable_library: true,
+        live_encounter_tracking: true
       },
       catalog: { fixture_version: 1, party_level_focus: [] },
       active_encounter: { encounter_id: "enc_test", title: "The Bell Beneath Blackwater", encounter_revision: 4, brief_revision: 3, constraints_revision: 2 }
@@ -381,6 +384,54 @@ test("feature detection and registration are idempotent per model context", asyn
   assert.equal(registered.length, toolDefinitions().length);
   const result = await registered[1].execute({ encounter_id: "enc_test" });
   assert.equal(result.ok, true);
+});
+
+test("exposes custom-library and live-run workflows without a Generation Run", async () => {
+  const encounter = snapshot().encounter;
+  encounter.brief.party.size = 1;
+  encounter.originalCreatures = [{ id: "cre_bog", identity: { name: "Bog Strider", level: 5 }, defenses: { hp: { value: 48 } }, strikes: [] }];
+  encounter.participantGroups = [{ id: "cmp_bog", contentID: "creature/custom/cre_bog/current", name: "Bog Strider", level: 5, quantity: 1 }];
+  let run = createRunSession({ encounter, now: "2026-08-28T10:00:00.000Z" });
+  const saved = [];
+  const adapter = createWebMCPAdapter({
+    snapshot: snapshot({ encounter }),
+    getLibrary: async () => ({ encounters: [encounter], creatures: encounter.originalCreatures }),
+    saveLibraryCreature: async creature => { saved.push(creature); return creature; },
+    saveEncounter: async value => value,
+    getRunSession: async () => run,
+    runAction: async action => { run = applyRunAction(run, action, { random: () => 0 }); return run; }
+  });
+
+  const definitions = toolDefinitions().map(item => item.name);
+  for (const name of ["sidekickdm_list_library", "sidekickdm_save_custom_creature", "sidekickdm_save_encounter", "sidekickdm_get_run_state", "sidekickdm_set_initiative", "sidekickdm_apply_damage", "sidekickdm_add_condition", "sidekickdm_roll"]) assert.ok(definitions.includes(name), `${name} is not registered`);
+
+  const library = await adapter.execute("sidekickdm_list_library", { kind: "creatures" });
+  assert.equal(library.ok, true);
+  assert.equal(library.data.creatures[0].identity.name, "Bog Strider");
+  const creature = createEmptyOriginalCreature({ id: "cre_agent" });
+  creature.identity = { ...creature.identity, name: "Agent Creature", level: 5, concept: "A guided forest hunter.", roadmap: "skirmisher", encounterRole: "skirmisher", traits: ["plant"] };
+  creature.languages = ["Arboreal"];
+  creature.speeds = { land: 25 };
+  creature.perception = { band: "high", value: 17 };
+  creature.defenses = { ...creature.defenses, ac: { band: "moderate", value: 22 }, fortitude: { band: "moderate", value: 12 }, reflex: { band: "high", value: 15 }, will: { band: "moderate", value: 12 }, hp: { band: "moderate", value: 75 } };
+  creature.strikes = [{ id: "strike_1", name: "Claw", actionCost: 1, traits: [], attack: { band: "high", value: 17 }, damage: [{ expression: "2d8+7", type: "slashing" }], effect: "" }];
+  creature.tactics = "Circle isolated targets.";
+  creature.morale = "Retreat when bloodied.";
+  const savedCreature = await adapter.execute("sidekickdm_save_custom_creature", { creature });
+  assert.equal(savedCreature.ok, true);
+  assert.equal(saved.length, 1);
+
+  const state = await adapter.execute("sidekickdm_get_run_state", { run_id: run.id });
+  assert.equal(state.data.combatants[1].current_hp, 48);
+  const initiative = await adapter.execute("sidekickdm_set_initiative", { run_id: run.id, expected_run_revision: run.revision, combatant_id: "cmp_bog_1", value: 22 });
+  assert.equal(initiative.ok, true);
+  const damaged = await adapter.execute("sidekickdm_apply_damage", { run_id: run.id, expected_run_revision: run.revision, combatant_id: "cmp_bog_1", amount: 13 });
+  assert.equal(damaged.data.combatants.find(item => item.id === "cmp_bog_1").current_hp, 35);
+  const condition = await adapter.execute("sidekickdm_add_condition", { run_id: run.id, expected_run_revision: run.revision, combatant_id: "cmp_bog_1", name: "frightened", value: 1 });
+  assert.deepEqual(condition.data.combatants.find(item => item.id === "cmp_bog_1").conditions, [{ name: "frightened", value: 1 }]);
+  const rolled = await adapter.execute("sidekickdm_roll", { run_id: run.id, expected_run_revision: run.revision, combatant_id: "cmp_bog_1", label: "Bite damage", expression: "1d6+2" });
+  assert.equal(rolled.data.recent_log.at(-1).total, 3);
+  assert.deepEqual(projectRunSession(run), rolled.data);
 });
 
 test("registration binds tool handles and execution signals to the adapter lifecycle", async () => {

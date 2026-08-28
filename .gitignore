@@ -1,5 +1,7 @@
-dist/
-.build/
-native/.build/
 .DS_Store
+.build/
 .codebase-memory/
+dist/
+native/.build/
+native/native/.build/
+native/.swiftpm/

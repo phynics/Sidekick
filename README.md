@@ -1,8 +1,14 @@
+<p align="center">
+  <img src="public/brand/sidekick-logo-v3-transparent.png" width="180" alt="Sidekick DM logo: a green dragon hand raising a checked note above a game master screen">
+</p>
+
 # Sidekick DM
 
 Sidekick DM is a local-first Pathfinder 2e encounter workspace. Build creatures and encounters, keep reusable libraries, and run combat with initiative, hit points, conditions, and dice rolls. A WebMCP-capable agent can use the same validated encounter model.
 
 The browser loads a Swift engine compiled to WebAssembly. Encounter data stays in IndexedDB unless you export it.
+
+The canonical logo is [`public/brand/sidekick-logo-v3-transparent.png`](public/brand/sidekick-logo-v3-transparent.png).
 
 ## Project documentation
 

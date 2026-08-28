@@ -28,4 +28,21 @@ const app = await readFile("src/app.js", "utf8");
 for (const fragment of ["globalThis.sidekickBridge", "globalThis.sidekickDM", "Change Swift state", "loadBootAssets", "Swift-owned value", "data-modal-open=\"catalog\"", "data-modal-open=\"creature\"", "data-modal-open=\"export\"", "data-pwl-group", "data-creature-remove", "Customize statistics", "data-catalog-filter", "data-catalog-page", "data-catalog-inspect", "Full Creature inspection", "catalogEntryCanAdd", "Add unavailable for unsupported or partial entries", "export-components-json", "export-components-zip", "export-library-json", "export-library-zip", "import-components-zip", "import-library-zip", "migrated v"]) {
   if (!app.includes(fragment)) throw new Error(`Browser boundary contract missing: ${fragment}`);
 }
+
+const logoPath = "public/brand/sidekick-logo-v3-transparent.png";
+const [index, readme, logo] = await Promise.all([
+  readFile("index.html", "utf8"),
+  readFile("README.md", "utf8"),
+  readFile(logoPath)
+]);
+if (logo.length === 0) throw new Error("Canonical Sidekick logo is empty.");
+if (!app.includes(`./${logoPath}`)) throw new Error("The app does not use the canonical Sidekick logo.");
+if (!readme.includes(logoPath)) throw new Error("The README does not show the canonical Sidekick logo.");
+for (const fragment of [
+  `<link rel="icon" type="image/png" href="./${logoPath}"`,
+  `<link rel="apple-touch-icon" href="./${logoPath}"`,
+  `https://phynics.github.io/Sidekick/${logoPath}`
+]) {
+  if (!index.includes(fragment)) throw new Error(`Browser logo metadata missing: ${fragment}`);
+}
 console.log("Browser source boundary passed.");

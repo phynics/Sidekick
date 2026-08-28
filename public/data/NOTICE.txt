@@ -1,0 +1,6 @@
+Sidekick DM curated catalog
+
+Source: Foundry VTT PF2e data, current remaster records selected for the POC.
+License basis: ORC where marked in per-entry provenance.
+No images, portraits, maps, tokens, macros, or Foundry rule-element automation are redistributed.
+Review per-entry provenance and the final release notices before publication.

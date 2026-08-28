@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 
-for (const file of ["src/app.js", "src/boot.js", "src/wasm-engine.js"]) {
+for (const file of ["src/app.js", "src/boot.js", "src/wasm-engine.js", "src/catalog-index.js", "src/creature-builder.js", "src/hazard-builder.js", "src/encounter-packet.js", "src/npc-profile.js", "src/webmcp-adapter.js"]) {
   await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--check", file], { stdio: "inherit" });
     child.once("error", reject);

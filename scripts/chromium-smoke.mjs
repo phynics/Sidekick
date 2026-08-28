@@ -73,6 +73,8 @@ try {
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=swift-value]')?.textContent.trim()"), "7");
   const initial = await evaluate("({ value: document.querySelector('[data-testid=swift-value]').textContent.trim(), budget: document.querySelector('[data-testid=construction-budget]').textContent.trim(), asset: document.querySelector('[data-testid=asset-status]').textContent.trim(), bridge: document.querySelector('[data-testid=bridge-status]').textContent.trim() })");
   if (initial.value !== "7" || initial.budget !== "80 XP" || !initial.asset.includes("Static Encounter Brief")) throw new Error("Chromium did not render the initial Swift value, budget, and JSON asset.");
+  const webMCPBudget = await evaluate("globalThis.sidekickDM.webMCP.execute('sidekickdm_get_budget')");
+  if (!webMCPBudget?.ok || webMCPBudget.data.construction_budget !== 80) throw new Error("The read-only WebMCP adapter did not expose the current Wasm budget.");
   await evaluate("document.querySelector('[data-action=increment]').click()");
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=swift-value]')?.textContent.trim()"), "8");
   const updated = await evaluate("({ value: document.querySelector('[data-testid=swift-value]').textContent.trim(), bridge: document.querySelector('[data-testid=bridge-status]').textContent.trim() })");
@@ -89,9 +91,49 @@ try {
   await waitFor(async () => await evaluate("document.querySelector('.participants').textContent.includes('No participants')"), true);
   await evaluate("document.querySelector('[data-action=redo]').click()");
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=participant-group_1]') !== null"), true);
+  const persisted = await evaluate("globalThis.sidekickDM.persistence.loadSavedDraft()");
+  if (!persisted || Object.hasOwn(persisted, "budget") || Object.hasOwn(persisted, "readiness")) throw new Error("IndexedDB persisted derived budget or readiness values as authority.");
   await command("Page.reload");
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=participant-group_1]') !== null"), true);
-  console.log("Chromium browser smoke passed: PF2 budget, semantic mutation, stale-safe history, and IndexedDB reload succeeded.");
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "80 XP");
+  await evaluate("const f = document.querySelector('[data-action=search-catalog]'); f.elements.query.value = 'orc'; f.requestSubmit();");
+  await waitFor(async () => await evaluate("document.querySelector('[data-catalog-add=\"creature/monster-core/orc-veteran/current\"]') !== null"), true);
+  await evaluate("document.querySelector('[data-catalog-add=\"creature/monster-core/orc-veteran/current\"]').click()");
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=participant-group_2]')?.textContent.includes('Orc Veteran')"), true);
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "95 XP");
+  await evaluate("const s = document.querySelector('[data-catalog-component=group_2][data-catalog-field=adjustment]'); s.value = 'elite'; s.dispatchEvent(new Event('change', { bubbles: true }))");
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "100 XP");
+  await command("Page.reload");
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=participant-group_2]')?.textContent.includes('Orc Veteran')"), true);
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "100 XP");
+  await evaluate(`(async () => { const values = { name: "Mire Scout", concept: "A shrine guardian", roadmap: "skirmisher", traits: "humanoid", languages: "Common", perception: "9", ac: "18", fortitude: "9", reflex: "12", will: "9", hp: "45", speed: "25", strikeName: "Spear", strikeAttack: "12", strikeDamage: "1d8+4", tactics: "Flank intruders.", morale: "Withdraw when bloodied." }; for (const [key, value] of Object.entries(values)) { const field = document.querySelector('#creature-builder-root [data-field="' + key + '"]'); field.value = value; field.dispatchEvent(new Event('change', { bubbles: true })); await new Promise(requestAnimationFrame); } })()`);
+  await waitFor(async () => await evaluate("document.querySelector('#creature-builder-root [data-action=add]')?.disabled"), false);
+  await evaluate("document.querySelector('#creature-builder-root [data-action=add]').click()");
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=participant-group_3]')?.textContent.includes('Mire Scout')"), true);
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "110 XP");
+  await evaluate(`(async () => { const values = { name: "Mire Bell Snare", traits: "mechanical", description: "A submerged chain catches trespassers.", detection: "18", disableMethods: "Thievery|17", trigger: "A creature crosses the chain.", effect: "The chain knocks the creature prone.", reset: "Reset the chain in ten minutes." }; for (const [key, value] of Object.entries(values)) { const field = document.querySelector('#hazard-builder-root [data-field="' + key + '"]'); field.value = value; field.dispatchEvent(new Event('change', { bubbles: true })); await new Promise(requestAnimationFrame); } })()`);
+  await waitFor(async () => await evaluate("document.querySelector('#hazard-builder-root [data-action=add]')?.disabled"), false);
+  await evaluate("document.querySelector('#hazard-builder-root [data-action=add]').click()");
+  await waitFor(async () => await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.hazards.length"), 1);
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=avoidable-xp]').textContent.trim()"), "2 XP");
+  const packetSections = [
+    ["identity", { title: "The Bell Beneath Blackwater", premise: "A drowned cult guards the shrine bell.", objective: "Stop the bell before it calls the flood.", stakes: "The lower district floods if the bell rings." }],
+    ["setup", { trigger: "The bell tolls when the party enters.", battlefieldDescription: "A flooded shrine with raised walkways.", startingPositions: "The defenders begin beside the eastern pool.", awarenessState: "The sentries are alert.", immediateFeatures: "Knee-deep water\nA cracked bell rope" }],
+    ["running_guidance", { participantRoles: "Sentries screen the captain.", openingTactics: "Delay while the captain reaches the bell.", ongoingTactics: "Push isolated targets toward the water.", coordinationConflict: "Sentries retreat if the captain falls.", triggersReinforcements: "A second wave arrives when the bell is struck.", moraleSummary: "The cultists flee when the captain falls." }],
+    ["cohesion", { participantPresence: "The cult is protecting its shrine.", relationships: "The captain rules the sentries through fear.", hazardTerrainFit: "The flooded floor hides the snare." }],
+    ["outcomes", { victory: "The party silences the bell.", failure: "The flood reaches the lower district." }]
+  ];
+  for (const [section, values] of packetSections) {
+    const beforeRevision = await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.revision");
+    await evaluate(`(() => { const form = document.querySelector('[data-packet-form="${section}"]'); const values = ${JSON.stringify(values)}; for (const [name, value] of Object.entries(values)) form.elements[name].value = value; form.requestSubmit(); return true; })()`);
+    await waitFor(async () => await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.revision"), beforeRevision + 1);
+  }
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=readiness]').textContent.trim()"), "ready_with_warnings");
+  await command("Page.reload");
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=participant-group_3]')?.textContent.includes('Mire Scout')"), true);
+  await waitFor(async () => await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.hazards.length"), 1);
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=readiness]').textContent.trim()"), "ready_with_warnings");
+  console.log("Chromium browser smoke passed: PF2 budget, Catalog, builders, ready Packet, WebMCP reads, history, and IndexedDB reload succeeded.");
 } finally {
   socket?.close();
   browser.kill("SIGTERM");

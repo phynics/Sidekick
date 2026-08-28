@@ -13,7 +13,9 @@
     "build": "node scripts/build.mjs",
     "verify:native": "node scripts/verify-native.mjs",
     "verify:browser": "node scripts/verify-browser-source.mjs",
+    "verify:webmcp": "node scripts/verify-webmcp.mjs",
+    "verify:catalog": "node scripts/verify-catalog.mjs",
     "test:browser": "node scripts/chromium-smoke.mjs",
-    "check": "npm run bootstrap && npm run build && npm run verify:native && npm run verify:browser && npm run test:browser"
+    "check": "npm run bootstrap && npm run verify:catalog && npm run verify:webmcp && npm run build && npm run verify:native && npm run verify:browser && npm run test:browser"
   }
 }

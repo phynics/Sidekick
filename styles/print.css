@@ -1,0 +1,40 @@
+/* Keep this file in sync with PRINT_CSS in src/print-packet.js. The browser
+ * host may load it for the normal app, while standalone projections inline the
+ * same rules to remain usable from a locally restored encounter. */
+@page { margin: 14mm 13mm; size: auto; }
+* { box-sizing: border-box; }
+.print-packet { color: #17202a; background: #fff; font: 11pt/1.45 Georgia, "Times New Roman", serif; max-width: 210mm; margin: 0 auto; }
+.print-packet h1, .print-packet h2, .print-packet h3, .print-packet h4 { font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.15; }
+.print-packet h1 { font-size: 26pt; margin: .2em 0 .35em; }
+.print-packet h2 { font-size: 17pt; border-bottom: 1px solid #8a9299; padding-bottom: .18em; margin: 1.2em 0 .6em; }
+.print-packet h3 { font-size: 13pt; margin: 1em 0 .35em; }
+.print-packet h4 { font-size: 10pt; margin: .65em 0 .15em; text-transform: uppercase; letter-spacing: .04em; }
+.print-cover { border-bottom: 2px solid #17202a; padding-bottom: 9mm; }
+.print-meta, .print-empty { color: #52606d; font-size: 9pt; }
+.print-field p { margin: .15em 0 .5em; white-space: pre-wrap; }
+.print-list { margin: .15em 0 .6em; padding-left: 1.3em; }
+.print-field, .print-subsection, .print-phase, .print-stat-block, .print-readiness { break-inside: avoid; page-break-inside: avoid; }
+.print-phase, .print-stat-block, .print-subsection { border: 1px solid #bbc2c8; border-radius: 3px; padding: 4mm; margin: 0 0 4mm; }
+.print-stat-block { border-left: 4px solid #34495e; }
+.print-facts { margin: .2em 0 .6em; }
+.print-facts > div { display: grid; grid-template-columns: minmax(30mm, 42mm) 1fr; gap: 2mm; border-bottom: 1px solid #e1e5e8; padding: 1.2mm 0; }
+.print-facts dt { font-weight: 700; }
+.print-facts dd { margin: 0; white-space: pre-wrap; }
+.print-facts .print-list { margin: 0; }
+.print-table-wrap { overflow: visible; }
+.print-packet table { border-collapse: collapse; width: 100%; font-size: 8pt; table-layout: fixed; word-break: break-word; }
+.print-packet th, .print-packet td { border: 1px solid #aeb7bf; padding: 1.5mm; vertical-align: top; text-align: left; }
+.print-packet thead { display: table-header-group; }
+.print-packet tr { break-inside: avoid; page-break-inside: avoid; }
+.print-footer { border-top: 1px solid #bbc2c8; margin-top: 8mm; padding-top: 3mm; color: #52606d; font-size: 8pt; }
+@media screen { .print-packet { padding: 12mm; } .print-packet .print-section { margin-bottom: 12mm; } }
+@media print {
+  .print-packet { max-width: none; }
+  .print-packet a { color: inherit; text-decoration: none; }
+  .print-packet .controls, .print-packet button, .print-packet input, .print-packet select, .print-packet textarea, .print-packet form, .print-packet summary, .print-packet details, .print-packet [data-editing-control], .print-packet [data-action] { display: none !important; }
+  .print-packet h1, .print-packet h2, .print-packet h3 { break-after: avoid; page-break-after: avoid; }
+  .print-section { break-before: auto; page-break-before: auto; }
+  .print-section:first-of-type { break-before: avoid; page-break-before: avoid; }
+  .print-notices { break-before: page; page-break-before: always; }
+  .print-notice-copy { break-inside: avoid; page-break-inside: avoid; }
+}

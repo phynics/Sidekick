@@ -1,0 +1,100 @@
+{
+  "catalog_id": "sidekick-dm-p0",
+  "counts": {
+    "creatures": 8,
+    "hazards": 3,
+    "total": 11
+  },
+  "determinism": {
+    "encoding": "UTF-8 JSON, recursively sorted keys, stable array order, trailing newline",
+    "generated_at": "2026-08-28T00:00:00Z"
+  },
+  "entries": [
+    {
+      "completeness": "complete",
+      "content_id": "creature/monster-core/aapoph-granitescale/current",
+      "license_basis": "ORC",
+      "source_sha256": "2bf005ec5a8fd0bcd8b171dcf7b9a3b0bd0f54a1d1fdf1b73a204a418004d589",
+      "support": "supported"
+    },
+    {
+      "completeness": "complete",
+      "content_id": "creature/monster-core/flame-drake/current",
+      "license_basis": "ORC",
+      "source_sha256": "ff80d9dfbd7c99bd65931244027f8398825011550902cc1ad3c419ac20e2c8dd",
+      "support": "supported"
+    },
+    {
+      "completeness": "complete",
+      "content_id": "creature/monster-core/goblin-pyro/current",
+      "license_basis": "ORC",
+      "source_sha256": "bdb745eb40cba6aae175a67cd2fc6b8481eaae82dd8407e8b5c8215872ddcaf4",
+      "support": "supported"
+    },
+    {
+      "completeness": "complete",
+      "content_id": "creature/monster-core/goblin-warrior/current",
+      "license_basis": "ORC",
+      "source_sha256": "9f0204d98f439e13ff0ad4d031ed3808cd7740315a6cd6b2455ddf6600bc88db",
+      "support": "supported"
+    },
+    {
+      "completeness": "complete",
+      "content_id": "creature/monster-core/orc-veteran/current",
+      "license_basis": "ORC",
+      "source_sha256": "6e9f9cc200db1452f8bfc1bd8871421a9447589f4d075c524c146eb7fd77b4d3",
+      "support": "supported"
+    },
+    {
+      "completeness": "complete",
+      "content_id": "creature/monster-core/phantom-knight/current",
+      "license_basis": "ORC",
+      "source_sha256": "fa60015e8435d1ac75d1ed7e2dd4b3cf8279b2d66ed3d9d145491417435e66ad",
+      "support": "supported"
+    },
+    {
+      "completeness": "complete",
+      "content_id": "creature/monster-core/pixie/current",
+      "license_basis": "ORC",
+      "source_sha256": "e43dd18cd559d89327d2178650846b78aa321a9fd6c1da288c80b586316553cd",
+      "support": "supported"
+    },
+    {
+      "completeness": "complete",
+      "content_id": "creature/npc-core/ancestry-npcs-dwarf-dwarf-smith/current",
+      "license_basis": "ORC",
+      "source_sha256": "36c0eb72daca5d3264fb2a2397dbddc46f505e0235b7f7da63cce1062fd1d7b7",
+      "support": "supported"
+    },
+    {
+      "completeness": "complete",
+      "content_id": "hazard/gm-core/bottomless-pit/current",
+      "license_basis": "ORC",
+      "source_sha256": "f80f44bece80f639e93fde9b2bef574da49abd3fd45bd10a4ee3a1a4a112c592",
+      "support": "supported"
+    },
+    {
+      "completeness": "complete",
+      "content_id": "hazard/gm-core/electric-latch-rune/current",
+      "license_basis": "ORC",
+      "source_sha256": "d62280cc1300d9a6dc30f20af424348cc90f4ce7770e2591ca5e2ba53d543690",
+      "support": "supported"
+    },
+    {
+      "completeness": "complete",
+      "content_id": "hazard/gm-core/quicksand/current",
+      "license_basis": "ORC",
+      "source_sha256": "ee56de4ac57cff87d62fe1f8a245fa2b16d472fdf4afcb15567b618f75c685d0",
+      "support": "supported"
+    }
+  ],
+  "fixture_version": 1,
+  "generator": {
+    "name": "GenerateSidekickDMCatalog",
+    "version": "0.1.0"
+  },
+  "source": {
+    "revision": "4cbdaa37d6c33e9519561bae2c59a23e0288cbce",
+    "system": "foundryvtt-pf2e"
+  }
+}

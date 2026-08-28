@@ -1,0 +1,1050 @@
+{
+  "catalog_id": "sidekick-dm-p0",
+  "entries": [
+    {
+      "completeness": "complete",
+      "content_id": "creature/monster-core/aapoph-granitescale/current",
+      "detail": {
+        "abilities": [
+          {
+            "action_cost": "reaction",
+            "name": "Chipping Scales",
+            "text": "Frequency once per day Trigger The granitescale is about to take piercing or slashing damage Effect The granitescale twists to take the blow on their hardest scales, which they shed to reduce the incoming force. The granitescale gains resistance 15 to the damage, but their AC is reduced by 2 for 1 day, when the shed scales regrow.",
+            "traits": []
+          },
+          {
+            "action_cost": 1,
+            "name": "Rattling Spear",
+            "text": "Requirements The granitescale's last action was a successful longspear Strike Effect The granitescale rattles the base of their spear, attempting an Intimidation check to all enemies within 30 feet (compare the check result to the targets' Will DCs individually).",
+            "traits": [
+              "auditory",
+              "emotion",
+              "mental"
+            ]
+          },
+          {
+            "action_cost": "passive",
+            "name": "Serpentfolk Venom",
+            "text": "Saving Throw Maximum Duration 6 rounds Stage 1 damage and Enfeebled 1 (1 round) Stage 2 damage and enfeebled 1 (1 round)",
+            "traits": [
+              "poison"
+            ]
+          }
+        ],
+        "defenses": {
+          "ac": 24,
+          "fortitude": 16,
+          "hp": 120,
+          "reflex": 14,
+          "will": 11
+        },
+        "languages": [
+          "aklo",
+          "common",
+          "sakvroth"
+        ],
+        "morale": "Withdraw or surrender when its stated motivation no longer holds.",
+        "perception": 13,
+        "senses": [
+          "darkvision",
+          "scent"
+        ],
+        "size": "med",
+        "skills": {
+          "acrobatics": 14,
+          "athletics": 15,
+          "intimidation": 15
+        },
+        "speeds": {
+          "land": 25
+        },
+        "spellcasting_blocks": [],
+        "strikes": [
+          {
+            "damage": "",
+            "name": "Fangs",
+            "traits": []
+          },
+          {
+            "damage": "",
+            "name": "Javelin",
+            "traits": [
+              "range-increment-30"
+            ]
+          },
+          {
+            "damage": "",
+            "name": "Longspear",
+            "traits": [
+              "reach"
+            ]
+          }
+        ],
+        "tactics": "Use the creature's listed actions and terrain to pursue its role."
+      },
+      "edition": "current",
+      "environments": [
+        "underground"
+      ],
+      "hazard_complexity": null,
+      "kind": "creature",
+      "level": 6,
+      "name": "Aapoph Granitescale",
+      "provenance": {
+        "diagnostics": [],
+        "edition": "current",
+        "license_basis": "ORC",
+        "notices": [
+          "ORC"
+        ],
+        "source_page": null,
+        "source_sha256": "2bf005ec5a8fd0bcd8b171dcf7b9a3b0bd0f54a1d1fdf1b73a204a418004d589",
+        "source_title": "Pathfinder Monster Core",
+        "upstream": {
+          "identifier": "MXSKccQqbQqQ77Ii",
+          "pack": "packs/pathfinder-monster-core",
+          "system": "foundryvtt-pf2e"
+        }
+      },
+      "rarity": "common",
+      "roles": [
+        "skirmisher"
+      ],
+      "source": "Pathfinder Monster Core",
+      "spellcasting": false,
+      "summary": "The mutated aapophs dubbed granitescales have bulky frames covered in hard gray plates. These scales offer protection but shed when struck with too much force. Granitescales lik...",
+      "support": "supported",
+      "traits": [
+        "humanoid",
+        "mutant",
+        "serpentfolk"
+      ]
+    },
+    {
+      "completeness": "complete",
+      "content_id": "creature/monster-core/flame-drake/current",
+      "detail": {
+        "abilities": [
+          {
+            "action_cost": 2,
+            "name": "Draconic Frenzy",
+            "text": "The flame drake makes two Fangs Strikes and one Tail Strike in any order.",
+            "traits": []
+          },
+          {
+            "action_cost": 2,
+            "name": "Fireball Breath",
+            "text": "The flame drake expels a ball of flame to a range of 180 feet that explodes in a . Creatures in the burst take damage ( save). The flame drake can't use Fireball Breath again for 1d6 rounds.",
+            "traits": [
+              "fire",
+              "primal"
+            ]
+          },
+          {
+            "action_cost": "passive",
+            "name": "Smoke Vision",
+            "text": "Smoke doesn't impair a flame drake's vision; they ignore Concealment from smoke.",
+            "traits": []
+          },
+          {
+            "action_cost": 1,
+            "name": "Speed Surge",
+            "text": "Frequency three times per day Effect The flame drake Strides or Flies twice.",
+            "traits": [
+              "move"
+            ]
+          }
+        ],
+        "defenses": {
+          "ac": 22,
+          "fortitude": 12,
+          "hp": 75,
+          "reflex": 10,
+          "will": 10
+        },
+        "languages": [
+          "draconic"
+        ],
+        "morale": "Withdraw or surrender when its stated motivation no longer holds.",
+        "perception": 12,
+        "senses": [
+          "darkvision",
+          "scent"
+        ],
+        "size": "lg",
+        "skills": {
+          "acrobatics": 10,
+          "athletics": 12,
+          "stealth": 9,
+          "survival": 10
+        },
+        "speeds": {
+          "land": 20
+        },
+        "spellcasting_blocks": [],
+        "strikes": [
+          {
+            "damage": "",
+            "name": "Fangs",
+            "traits": []
+          },
+          {
+            "damage": "",
+            "name": "Tail",
+            "traits": [
+              "reach-10"
+            ]
+          }
+        ],
+        "tactics": "Use the creature's listed actions and terrain to pursue its role."
+      },
+      "edition": "current",
+      "environments": [
+        "aquatic",
+        "desert",
+        "forest",
+        "underground",
+        "urban"
+      ],
+      "hazard_complexity": null,
+      "kind": "creature",
+      "level": 5,
+      "name": "Flame Drake",
+      "provenance": {
+        "diagnostics": [],
+        "edition": "current",
+        "license_basis": "ORC",
+        "notices": [
+          "ORC"
+        ],
+        "source_page": null,
+        "source_sha256": "ff80d9dfbd7c99bd65931244027f8398825011550902cc1ad3c419ac20e2c8dd",
+        "source_title": "Pathfinder Monster Core",
+        "upstream": {
+          "identifier": "qlxVPpwVFw5qIVQM",
+          "pack": "packs/pathfinder-monster-core",
+          "system": "foundryvtt-pf2e"
+        }
+      },
+      "rarity": "common",
+      "roles": [
+        "brute"
+      ],
+      "source": "Pathfinder Monster Core",
+      "spellcasting": false,
+      "summary": "Flame drakes dwell near volcanoes and magma, but it's not unheard of for one to drift into nearby areas like forests or wooded hills. Their scales are usually some shade of red,...",
+      "support": "supported",
+      "traits": [
+        "dragon",
+        "fire"
+      ]
+    },
+    {
+      "completeness": "complete",
+      "content_id": "creature/monster-core/goblin-pyro/current",
+      "detail": {
+        "abilities": [
+          {
+            "action_cost": "reaction",
+            "name": "Goblin Scuttle",
+            "text": "Trigger A goblin ally ends a move action adjacent to the goblin. Effect The goblin pyro Steps.",
+            "traits": []
+          }
+        ],
+        "defenses": {
+          "ac": 17,
+          "fortitude": 5,
+          "hp": 15,
+          "reflex": 9,
+          "will": 4
+        },
+        "languages": [
+          "common",
+          "goblin"
+        ],
+        "morale": "Withdraw or surrender when its stated motivation no longer holds.",
+        "perception": 4,
+        "senses": [
+          "darkvision"
+        ],
+        "size": "sm",
+        "skills": {
+          "acrobatics": 7,
+          "stealth": 7
+        },
+        "speeds": {
+          "land": 25
+        },
+        "spellcasting_blocks": [
+          "Arcane Spontaneous Spells"
+        ],
+        "strikes": [],
+        "tactics": "Use the creature's listed actions and terrain to pursue its role."
+      },
+      "edition": "current",
+      "environments": [
+        "desert",
+        "forest",
+        "underground"
+      ],
+      "hazard_complexity": null,
+      "kind": "creature",
+      "level": 1,
+      "name": "Goblin Pyro",
+      "provenance": {
+        "diagnostics": [],
+        "edition": "current",
+        "license_basis": "ORC",
+        "notices": [
+          "ORC"
+        ],
+        "source_page": null,
+        "source_sha256": "bdb745eb40cba6aae175a67cd2fc6b8481eaae82dd8407e8b5c8215872ddcaf4",
+        "source_title": "Pathfinder Monster Core",
+        "upstream": {
+          "identifier": "Ky5eNRvN71O0tY9l",
+          "pack": "packs/pathfinder-monster-core",
+          "system": "foundryvtt-pf2e"
+        }
+      },
+      "rarity": "common",
+      "roles": [
+        "controller"
+      ],
+      "source": "Pathfinder Monster Core",
+      "spellcasting": true,
+      "summary": "Some goblins take their people's admiration of fire fully into the realm of deadly obsession. These pyromaniacs can be a great boon to a band of goblin raiders eager to torch th...",
+      "support": "supported",
+      "traits": [
+        "goblin",
+        "humanoid"
+      ]
+    },
+    {
+      "completeness": "complete",
+      "content_id": "creature/monster-core/goblin-warrior/current",
+      "detail": {
+        "abilities": [
+          {
+            "action_cost": "reaction",
+            "name": "Goblin Scuttle",
+            "text": "Trigger A goblin ally ends a move action adjacent to the goblin. Effect The goblin warrior Steps.",
+            "traits": []
+          }
+        ],
+        "defenses": {
+          "ac": 16,
+          "fortitude": 5,
+          "hp": 6,
+          "reflex": 7,
+          "will": 3
+        },
+        "languages": [
+          "common",
+          "goblin"
+        ],
+        "morale": "Withdraw or surrender when its stated motivation no longer holds.",
+        "perception": 2,
+        "senses": [
+          "darkvision"
+        ],
+        "size": "sm",
+        "skills": {
+          "acrobatics": 5,
+          "athletics": 2,
+          "nature": 1,
+          "stealth": 5
+        },
+        "speeds": {
+          "land": 25
+        },
+        "spellcasting_blocks": [],
+        "strikes": [
+          {
+            "damage": "",
+            "name": "Dogslicer",
+            "traits": [
+              "agile",
+              "backstabber",
+              "finesse"
+            ]
+          },
+          {
+            "damage": "",
+            "name": "Shortbow",
+            "traits": [
+              "deadly-d10",
+              "range-increment-60",
+              "reload-0"
+            ]
+          }
+        ],
+        "tactics": "Use the creature's listed actions and terrain to pursue its role."
+      },
+      "edition": "current",
+      "environments": [
+        "desert",
+        "forest"
+      ],
+      "hazard_complexity": null,
+      "kind": "creature",
+      "level": -1,
+      "name": "Goblin Warrior",
+      "provenance": {
+        "diagnostics": [],
+        "edition": "current",
+        "license_basis": "ORC",
+        "notices": [
+          "ORC"
+        ],
+        "source_page": null,
+        "source_sha256": "9f0204d98f439e13ff0ad4d031ed3808cd7740315a6cd6b2455ddf6600bc88db",
+        "source_title": "Pathfinder Monster Core",
+        "upstream": {
+          "identifier": "fLLKuOXwPq1Iq0U4",
+          "pack": "packs/pathfinder-monster-core",
+          "system": "foundryvtt-pf2e"
+        }
+      },
+      "rarity": "common",
+      "roles": [
+        "skirmisher"
+      ],
+      "source": "Pathfinder Monster Core",
+      "spellcasting": false,
+      "summary": "The frontline fighters of goblin tribes prefer to fight in large groups—especially when they can outnumber their foes at least three to one. These small humanoids typically have...",
+      "support": "supported",
+      "traits": [
+        "goblin",
+        "humanoid"
+      ]
+    },
+    {
+      "completeness": "complete",
+      "content_id": "creature/monster-core/orc-veteran/current",
+      "detail": {
+        "abilities": [],
+        "defenses": {
+          "ac": 18,
+          "fortitude": 8,
+          "hp": 23,
+          "reflex": 7,
+          "will": 4
+        },
+        "languages": [
+          "common",
+          "orcish"
+        ],
+        "morale": "Withdraw or surrender when its stated motivation no longer holds.",
+        "perception": 6,
+        "senses": [
+          "darkvision"
+        ],
+        "size": "med",
+        "skills": {
+          "athletics": 7,
+          "intimidation": 4,
+          "survival": 4
+        },
+        "speeds": {
+          "land": 25
+        },
+        "spellcasting_blocks": [],
+        "strikes": [
+          {
+            "damage": "",
+            "name": "Fist",
+            "traits": [
+              "agile",
+              "nonlethal",
+              "unarmed"
+            ]
+          },
+          {
+            "damage": "",
+            "name": "Javelin",
+            "traits": [
+              "thrown-30"
+            ]
+          },
+          {
+            "damage": "",
+            "name": "Orc Necksplitter",
+            "traits": [
+              "forceful",
+              "sweep"
+            ]
+          },
+          {
+            "damage": "",
+            "name": "Shortsword",
+            "traits": [
+              "agile",
+              "versatile-p"
+            ]
+          }
+        ],
+        "tactics": "Use the creature's listed actions and terrain to pursue its role."
+      },
+      "edition": "current",
+      "environments": [
+        "desert",
+        "underground"
+      ],
+      "hazard_complexity": null,
+      "kind": "creature",
+      "level": 1,
+      "name": "Orc Veteran",
+      "provenance": {
+        "diagnostics": [],
+        "edition": "current",
+        "license_basis": "ORC",
+        "notices": [
+          "ORC"
+        ],
+        "source_page": null,
+        "source_sha256": "6e9f9cc200db1452f8bfc1bd8871421a9447589f4d075c524c146eb7fd77b4d3",
+        "source_title": "Pathfinder Monster Core",
+        "upstream": {
+          "identifier": "V90OYOMyyPLPJuod",
+          "pack": "packs/pathfinder-monster-core",
+          "system": "foundryvtt-pf2e"
+        }
+      },
+      "rarity": "common",
+      "roles": [
+        "defender"
+      ],
+      "source": "Pathfinder Monster Core",
+      "spellcasting": false,
+      "summary": "Orc veterans have survived several bloody and chaotic conflicts, coming out the other side with scars and experience that make them even more dangerous opponents. Many orcs are...",
+      "support": "supported",
+      "traits": [
+        "humanoid",
+        "orc"
+      ]
+    },
+    {
+      "completeness": "complete",
+      "content_id": "creature/monster-core/phantom-knight/current",
+      "detail": {
+        "abilities": [
+          {
+            "action_cost": "passive",
+            "name": "Phantom Touch",
+            "text": "Each time they make a Strike, a phantom can choose to deal spirit damage instead of the normal physical damage type.",
+            "traits": [
+              "spirit"
+            ]
+          },
+          {
+            "action_cost": "passive",
+            "name": "Susceptible to Death",
+            "text": "Though phantoms aren't alive, neither are they undead, and they are uniquely vulnerable to the effects of death. A phantom whose Hit Points are reduced to 0 as a result of a death effect (such as from a spell like ) is immediately whisked away to the River of Souls, where their soul resumes the usual path to the afterlife.",
+            "traits": []
+          },
+          {
+            "action_cost": 2,
+            "name": "Walk the Ethereal Line",
+            "text": "The phantom walks the thin line between the Ethereal Plane and the Universe in order to exist on both planes simultaneously. They can shift back to solely the Ethereal Plane by using this ability again.",
+            "traits": []
+          }
+        ],
+        "defenses": {
+          "ac": 21,
+          "fortitude": 8,
+          "hp": 45,
+          "reflex": 12,
+          "will": 13
+        },
+        "languages": [
+          "common"
+        ],
+        "morale": "Withdraw or surrender when its stated motivation no longer holds.",
+        "perception": 13,
+        "senses": [
+          "darkvision"
+        ],
+        "size": "med",
+        "skills": {
+          "intimidation": 12
+        },
+        "speeds": {
+          "land": 0
+        },
+        "spellcasting_blocks": [],
+        "strikes": [
+          {
+            "damage": "",
+            "name": "Phantom Bow",
+            "traits": [
+              "deadly-d10",
+              "magical",
+              "range-increment-120",
+              "volley-30"
+            ]
+          },
+          {
+            "damage": "",
+            "name": "Phantom Sword",
+            "traits": [
+              "finesse",
+              "magical",
+              "versatile-p"
+            ]
+          }
+        ],
+        "tactics": "Use the creature's listed actions and terrain to pursue its role."
+      },
+      "edition": "current",
+      "environments": [
+        "underground"
+      ],
+      "hazard_complexity": null,
+      "kind": "creature",
+      "level": 4,
+      "name": "Phantom Knight",
+      "provenance": {
+        "diagnostics": [],
+        "edition": "current",
+        "license_basis": "ORC",
+        "notices": [
+          "ORC"
+        ],
+        "source_page": null,
+        "source_sha256": "fa60015e8435d1ac75d1ed7e2dd4b3cf8279b2d66ed3d9d145491417435e66ad",
+        "source_title": "Pathfinder Monster Core",
+        "upstream": {
+          "identifier": "9VMoTqyVaKc4ZR4H",
+          "pack": "packs/pathfinder-monster-core",
+          "system": "foundryvtt-pf2e"
+        }
+      },
+      "rarity": "uncommon",
+      "roles": [
+        "defender"
+      ],
+      "source": "Pathfinder Monster Core",
+      "spellcasting": false,
+      "summary": "Cavaliers and knights who died for their cause make for particularly strongwilled phantoms. Though their motives vary, these phantoms often seek to continue their lifelong missi...",
+      "support": "supported",
+      "traits": [
+        "ethereal",
+        "incorporeal",
+        "phantom",
+        "spirit"
+      ]
+    },
+    {
+      "completeness": "complete",
+      "content_id": "creature/monster-core/pixie/current",
+      "detail": {
+        "abilities": [
+          {
+            "action_cost": 1,
+            "name": "Sprinkle Pixie Dust",
+            "text": "The pixie sprinkles pixie dust onto one of their arrows. If the pixie hits a creature with that arrow before the pixie's next turn, the arrow inflicts one of the following special effects of the pixie's choice instead of dealing damage. Each effect depends on the target's save. On a critical hit, the target gets a result one degree worse than it rolled. Charm (emotion, incapacitation, mental) The arrow has the effect of a spell, except the target doesn't gain a bonus to its save if the only hostile act was the pixie firing its bow, and the pixie can choose to direct the target's adoration toward another creature rather than itself. Memory Loss (mental) On a failed Will save, the target loses the last 5 minutes of its memory. Sleep (incapacitation, mental, sleep) The target suffers the effects of a 3rd-rank spell. Subdual (mental, nonlethal) The target takes damage, depending on its basic Will save.",
+            "traits": [
+              "manipulate",
+              "primal"
+            ]
+          }
+        ],
+        "defenses": {
+          "ac": 23,
+          "fortitude": 8,
+          "hp": 40,
+          "reflex": 14,
+          "will": 12
+        },
+        "languages": [
+          "common",
+          "fey"
+        ],
+        "morale": "Withdraw or surrender when its stated motivation no longer holds.",
+        "perception": 12,
+        "senses": [
+          "low-light-vision"
+        ],
+        "size": "sm",
+        "skills": {
+          "acrobatics": 13,
+          "deception": 11,
+          "nature": 10,
+          "stealth": 11
+        },
+        "speeds": {
+          "land": 15
+        },
+        "spellcasting_blocks": [
+          "Primal Innate Spells"
+        ],
+        "strikes": [
+          {
+            "damage": "",
+            "name": "Longbow",
+            "traits": [
+              "deadly-d10",
+              "magical",
+              "range-increment-100",
+              "reload-0",
+              "volley-20"
+            ]
+          },
+          {
+            "damage": "",
+            "name": "Shortsword",
+            "traits": [
+              "agile",
+              "finesse",
+              "magical",
+              "versatile-s"
+            ]
+          }
+        ],
+        "tactics": "Use the creature's listed actions and terrain to pursue its role."
+      },
+      "edition": "current",
+      "environments": [
+        "forest"
+      ],
+      "hazard_complexity": null,
+      "kind": "creature",
+      "level": 4,
+      "name": "Pixie",
+      "provenance": {
+        "diagnostics": [],
+        "edition": "current",
+        "license_basis": "ORC",
+        "notices": [
+          "ORC"
+        ],
+        "source_page": null,
+        "source_sha256": "e43dd18cd559d89327d2178650846b78aa321a9fd6c1da288c80b586316553cd",
+        "source_title": "Pathfinder Monster Core",
+        "upstream": {
+          "identifier": "Ehtm5k9iBYTvSUcZ",
+          "pack": "packs/pathfinder-monster-core",
+          "system": "foundryvtt-pf2e"
+        }
+      },
+      "rarity": "common",
+      "roles": [
+        "controller"
+      ],
+      "source": "Pathfinder Monster Core",
+      "spellcasting": true,
+      "summary": "Insatiably curious, overly excitable, and just a bit puckish, pixies are wanderers and tricksters who use their pixie dust to create all sorts of whimsical situations, as well a...",
+      "support": "supported",
+      "traits": [
+        "fey",
+        "sprite"
+      ]
+    },
+    {
+      "completeness": "complete",
+      "content_id": "creature/npc-core/ancestry-npcs-dwarf-dwarf-smith/current",
+      "detail": {
+        "abilities": [
+          {
+            "action_cost": "passive",
+            "name": "Blacksmithing Specialist",
+            "text": "For encounters involving blacksmithing, the dwarf smith is a 5th-level challenge.",
+            "traits": []
+          },
+          {
+            "action_cost": 2,
+            "name": "Crack the Shell",
+            "text": "The dwarf smith makes a Strike to break a creature's defenses. If the Strike hits and the creature is wearing armor with Hardness 9 or lower, the armor is . This Strike doesn't further damage armor that's already broken.",
+            "traits": []
+          },
+          {
+            "action_cost": "passive",
+            "name": "Temper Armament",
+            "text": "The smith spends 1 day tempering a single suit of metallic armor, metallic shield, or metallic weapon. Tempering armor or a shield increases its Hardness by 1. Tempering a weapon grants the weapon a +1 circumstance bonus to damage rolls. Regardless of the item, the tempering remains for 3 days, after which item is temporarily immune to further tempering for 1 week as the technique would otherwise damage it.",
+            "traits": [
+              "downtime"
+            ]
+          }
+        ],
+        "defenses": {
+          "ac": 14,
+          "fortitude": 6,
+          "hp": 12,
+          "reflex": 3,
+          "will": 5
+        },
+        "languages": [
+          "common",
+          "dwarven"
+        ],
+        "morale": "Withdraw or surrender when its stated motivation no longer holds.",
+        "perception": 5,
+        "senses": [
+          "darkvision"
+        ],
+        "size": "med",
+        "skills": {
+          "athletics": 6,
+          "crafting": 12,
+          "society": 6
+        },
+        "speeds": {
+          "land": 20
+        },
+        "spellcasting_blocks": [],
+        "strikes": [
+          {
+            "damage": "",
+            "name": "Clan Dagger",
+            "traits": [
+              "agile",
+              "parry",
+              "versatile-b"
+            ]
+          },
+          {
+            "damage": "",
+            "name": "Fist",
+            "traits": [
+              "agile",
+              "nonlethal",
+              "unarmed"
+            ]
+          },
+          {
+            "damage": "",
+            "name": "Light Hammer",
+            "traits": [
+              "agile"
+            ]
+          },
+          {
+            "damage": "",
+            "name": "Light Hammer",
+            "traits": [
+              "agile",
+              "thrown-20"
+            ]
+          }
+        ],
+        "tactics": "Use the creature's listed actions and terrain to pursue its role."
+      },
+      "edition": "current",
+      "environments": [
+        "underground",
+        "urban"
+      ],
+      "hazard_complexity": null,
+      "kind": "creature",
+      "level": 0,
+      "name": "Dwarf Smith",
+      "provenance": {
+        "diagnostics": [],
+        "edition": "current",
+        "license_basis": "ORC",
+        "notices": [
+          "ORC"
+        ],
+        "source_page": null,
+        "source_sha256": "36c0eb72daca5d3264fb2a2397dbddc46f505e0235b7f7da63cce1062fd1d7b7",
+        "source_title": "Pathfinder NPC Core",
+        "upstream": {
+          "identifier": "rY3uqGq5QyvNOU91",
+          "pack": "packs/pathfinder-npc-core/ancestry-npcs/dwarf",
+          "system": "foundryvtt-pf2e"
+        }
+      },
+      "rarity": "common",
+      "roles": [
+        "skirmisher"
+      ],
+      "source": "Pathfinder NPC Core",
+      "spellcasting": false,
+      "summary": "Many dwarves become smiths as their attention to detail, lifestyles that keep them close to useful materials such as iron, and a pride in their work all come together to become...",
+      "support": "supported",
+      "traits": [
+        "dwarf",
+        "humanoid"
+      ]
+    },
+    {
+      "completeness": "complete",
+      "content_id": "hazard/gm-core/bottomless-pit/current",
+      "detail": {
+        "complexity": "simple",
+        "defenses": {
+          "ac": 28,
+          "hardness": 9,
+          "hp": 36
+        },
+        "detection": "Stealth DC 20",
+        "disable_methods": [
+          "(trained) to remove the trapdoor"
+        ],
+        "effect": "The triggering creature falls in and continues to fall, potentially forever. That creature can try to to avoid falling. The DC to Climb the walls or Grab an Edge is 26. The pit contains many handholds, so the falling creature can try to Grab an Edge again every 6 seconds. If the creature succeeds, it can start to Climb out from that point (though it might be a very long climb, depending on how far the creature fell). Since the creature falls endlessly, it can rest and even prepare spells while falling, though items dropped while falling are usually lost forever.",
+        "reset": "The trap still causes creatures to fall forever if they fall in, but the trapdoor must be reset manually for the trap to become Hidden again.",
+        "routine": null,
+        "trigger": "A creature walks onto the trapdoor"
+      },
+      "edition": "current",
+      "environments": [
+        "urban"
+      ],
+      "hazard_complexity": "simple",
+      "kind": "hazard",
+      "level": 9,
+      "name": "Bottomless Pit",
+      "provenance": {
+        "diagnostics": [
+          "Nested item publication requires independent license review."
+        ],
+        "edition": "current",
+        "license_basis": "ORC",
+        "notices": [
+          "ORC"
+        ],
+        "source_page": null,
+        "source_sha256": "f80f44bece80f639e93fde9b2bef574da49abd3fd45bd10a4ee3a1a4a112c592",
+        "source_title": "Pathfinder GM Core",
+        "upstream": {
+          "identifier": "xkqjwu1ox0pQLOnb",
+          "pack": "packs/hazards",
+          "system": "foundryvtt-pf2e"
+        }
+      },
+      "rarity": "common",
+      "roles": [],
+      "source": "Pathfinder GM Core",
+      "spellcasting": null,
+      "summary": "An iron trapdoor covers an infinitely deep 10-foot-square pit.",
+      "support": "supported",
+      "traits": [
+        "magical",
+        "mechanical",
+        "trap"
+      ]
+    },
+    {
+      "completeness": "complete",
+      "content_id": "hazard/gm-core/electric-latch-rune/current",
+      "detail": {
+        "complexity": "simple",
+        "defenses": {
+          "ac": 10,
+          "hardness": 0,
+          "hp": 0
+        },
+        "detection": "Stealth DC 10",
+        "disable_methods": [
+          "(expert) to scratch out the rune without allowing electricity to flow, or (2nd rank; counteract DC 18) to counteract the rune"
+        ],
+        "effect": "The trap deals damage to the triggering creature ( save).",
+        "reset": null,
+        "routine": null,
+        "trigger": "A creature grasps the door latch directly or with a tool"
+      },
+      "edition": "current",
+      "environments": [
+        "underground",
+        "urban"
+      ],
+      "hazard_complexity": "simple",
+      "kind": "hazard",
+      "level": 3,
+      "name": "Electric Latch Rune",
+      "provenance": {
+        "diagnostics": [
+          "Nested item publication requires independent license review."
+        ],
+        "edition": "current",
+        "license_basis": "ORC",
+        "notices": [
+          "ORC"
+        ],
+        "source_page": null,
+        "source_sha256": "d62280cc1300d9a6dc30f20af424348cc90f4ce7770e2591ca5e2ba53d543690",
+        "source_title": "Pathfinder GM Core",
+        "upstream": {
+          "identifier": "491qhVbjsHnOuMZW",
+          "pack": "packs/hazards",
+          "system": "foundryvtt-pf2e"
+        }
+      },
+      "rarity": "common",
+      "roles": [],
+      "source": "Pathfinder GM Core",
+      "spellcasting": null,
+      "summary": "An invisible rune imprinted on a door latch releases a powerful electric discharge.",
+      "support": "supported",
+      "traits": [
+        "electricity",
+        "magical",
+        "trap"
+      ]
+    },
+    {
+      "completeness": "complete",
+      "content_id": "hazard/gm-core/quicksand/current",
+      "detail": {
+        "complexity": "complex",
+        "defenses": {
+          "ac": 10,
+          "hardness": 0,
+          "hp": 0
+        },
+        "detection": "Stealth DC 12",
+        "disable_methods": [
+          "(trained) to disturb the surface"
+        ],
+        "effect": "The triggering creature sinks into the quicksand up to its waist. The quicksand rolls initiative if it hasn't already.",
+        "reset": "The hazard still submerges anyone who walks in, but the surface doesn't become hidden again until it settles over the course of 24 hours.",
+        "routine": "(1 action) On its initiative, the quicksand pulls down each creature within it. A creature that was submerged up to its waist becomes submerged up to its neck, and a creature that was submerged up to its neck is pulled under and has to hold its breath to avoid suffocation. A creature in the quicksand can attempt a check to Swim to either raise itself by one step if it's submerged to its neck or worse, or to move 5 feet if it's submerged only up to its waist. On a critical failure, the creature is pulled down one step. A creature that Swims out of the quicksand escapes the hazard and is in a space adjacent to the quicksand patch. Other creatures can Aid the creature, typically by using a rope or similar aid, or attempt to pull the creature out with their own check, with the same results as if the creature attempted the check.",
+        "trigger": "A Huge or smaller creature walks onto the quicksand"
+      },
+      "edition": "current",
+      "environments": [
+        "aquatic",
+        "desert"
+      ],
+      "hazard_complexity": "complex",
+      "kind": "hazard",
+      "level": 3,
+      "name": "Quicksand",
+      "provenance": {
+        "diagnostics": [
+          "Nested item publication requires independent license review."
+        ],
+        "edition": "current",
+        "license_basis": "ORC",
+        "notices": [
+          "ORC"
+        ],
+        "source_page": null,
+        "source_sha256": "ee56de4ac57cff87d62fe1f8a245fa2b16d472fdf4afcb15567b618f75c685d0",
+        "source_title": "Pathfinder GM Core",
+        "upstream": {
+          "identifier": "C6nFe8SCWJ8FmLOT",
+          "pack": "packs/hazards",
+          "system": "foundryvtt-pf2e"
+        }
+      },
+      "rarity": "common",
+      "roles": [],
+      "source": "Pathfinder GM Core",
+      "spellcasting": null,
+      "summary": "A 15-foot-wide patch of water and sand attempts to submerge creatures that step onto it.",
+      "support": "supported",
+      "traits": [
+        "environmental"
+      ]
+    }
+  ],
+  "fixture_version": 1,
+  "generated_at": "2026-08-28T00:00:00Z",
+  "generator": {
+    "name": "GenerateSidekickDMCatalog",
+    "version": "0.1.0"
+  },
+  "source_revision": "4cbdaa37d6c33e9519561bae2c59a23e0288cbce"
+}

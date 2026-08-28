@@ -1,3 +1,4 @@
 dist/
+.build/
 native/.build/
 .DS_Store

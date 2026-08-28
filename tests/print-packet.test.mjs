@@ -148,3 +148,60 @@ test("restored embedded Catalog snapshots print without a runtime Catalog", () =
   assert.equal(projection.componentMechanics.participants[0].mechanics.defenses.ac, 24);
   assert.equal(projection.notices.catalogProvenance[0].contentID, catalog.entries[0].content_id);
 });
+
+test("prints existing spellcasting blocks, Catalog diagnostics, and unresolved-license warnings", () => {
+  const spellcaster = {
+    ...catalog.entries[0],
+    content_id: "creature/monster-core/spellcaster/current",
+    name: "Spellcaster",
+    provenance: {
+      ...catalog.entries[0].provenance,
+      license_basis: null,
+      diagnostics: ["Nested item publication requires independent license review."]
+    },
+    detail: { ...catalog.entries[0].detail, spellcasting_blocks: ["Arcane Spontaneous Spells"] }
+  };
+  const input = {
+    catalog: { ...catalog, catalog_id: "catalog-proof", source_revision: "source-proof", entries: [catalog.entries[0], spellcaster] },
+    manifest: {
+      catalog_id: "catalog-proof",
+      generated_at: "2026-08-28T00:00:00Z",
+      generator: { name: "Catalog Generator", version: "9.1.0" },
+      counts: { creatures: 2, hazards: 0, total: 2 },
+      source: { revision: "source-proof", system: "foundryvtt-pf2e" }
+    },
+    encounter: {
+      id: "enc_proof",
+      participantGroups: [
+        { id: "spellcaster_1", contentID: spellcaster.content_id, name: "Spellcaster", level: 5, quantity: 1 },
+        { id: "bog_1", contentID: catalog.entries[0].content_id, name: "Bog Strider", level: 5, quantity: 1 }
+      ],
+      hazards: [],
+      phases: [],
+      packetV1: { identity: { title: "Print proof" }, setup: {}, battlefield: {}, cohesion: {}, information: {}, outcomes: {} }
+    }
+  };
+  const projection = createEncounterPrintProjection(input);
+  assert.deepEqual(projection.componentMechanics.participants[0].mechanics.spellcasting, ["Arcane Spontaneous Spells"]);
+  assert.deepEqual(projection.notices.diagnostics, ["Nested item publication requires independent license review."]);
+  assert.deepEqual(projection.notices.unresolvedLicenses, ["License basis is unresolved for creature/monster-core/spellcaster/current."]);
+  assert.deepEqual(projection.notices.source, {
+    catalogID: "catalog-proof",
+    system: "foundryvtt-pf2e",
+    revision: "source-proof",
+    generatedAt: "2026-08-28T00:00:00Z",
+    generatorName: "Catalog Generator",
+    generatorVersion: "9.1.0",
+    counts: { creatures: 2, hazards: 0, total: 2 }
+  });
+  const html = renderEncounterPrintProjection(projection);
+  assert.match(html, /Arcane Spontaneous Spells/);
+  assert.match(html, /Catalog diagnostics/);
+  assert.match(html, /Nested item publication requires independent license review/);
+  assert.match(html, /Unresolved license warnings/);
+  assert.match(html, /License basis is unresolved/);
+  assert.match(html, /Catalog Generator/);
+  assert.match(html, /print-running-header/);
+  assert.match(html, /position:running\(sidekick-print-header\)/);
+  assert.match(renderEncounterPrintProjection(projection, { inlineStyles: false }), /styles\/print\.css/);
+});

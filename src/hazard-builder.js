@@ -142,6 +142,27 @@ export class HazardBuilderStore {
   check(expectedRevision) { if (expectedRevision != null && expectedRevision !== (this.hazard.revision ?? 0)) throw Object.assign(new Error("The Hazard changed after it was inspected."), { code: "stale_revision", details: { expected_revision: String(expectedRevision), current_revision: String(this.hazard.revision ?? 0) } }); }
 }
 
+function taggedHazardSnapshot(snapshot) {
+  if (snapshot && typeof snapshot === "object" && typeof snapshot.kind === "string" && (snapshot.simple || snapshot.existingComplex)) return structuredClone(snapshot);
+  const value = structuredClone(snapshot);
+  const complexity = value?.identity?.complexity ?? value?.complexity;
+  return complexity === "complex" ? { kind: "existing_complex", existingComplex: value } : { kind: "simple", simple: value };
+}
+
+function untaggedHazardSnapshot(snapshot) {
+  if (snapshot?.kind === "simple" && snapshot.simple) return structuredClone(snapshot.simple);
+  if (snapshot?.kind === "existing_complex" && snapshot.existingComplex) return structuredClone(snapshot.existingComplex);
+  return structuredClone(snapshot);
+}
+
+function taggedHazardCheckpoint(checkpoint) {
+  return { draft: structuredClone(checkpoint.draft), hazards: (checkpoint.hazards ?? []).map(taggedHazardSnapshot) };
+}
+
+function untaggedHazardCheckpoint(checkpoint) {
+  return { draft: structuredClone(checkpoint.draft), hazards: (checkpoint.hazards ?? []).map(untaggedHazardSnapshot) };
+}
+
 export class HazardCompositionStore {
   constructor(draft = {}, hazards = []) { this.draft = structuredClone(draft); this.hazards = structuredClone(hazards); this.history = []; this.redoHistory = []; }
   get budget() {
@@ -190,8 +211,8 @@ export class HazardCompositionStore {
   remove(id, expectedRevision = null, origin = "gm") { this.check(expectedRevision); if (!this.draft.hazards?.some(item => item.id === id)) throw Object.assign(new Error("That Hazard is not in the Encounter."), { code: "unknown_component" }); this.record(); this.draft.hazards = this.draft.hazards.filter(item => item.id !== id); this.hazards = this.hazards.filter(item => item.id !== id); this.commit(origin); }
   undo(expectedRevision = null) { this.check(expectedRevision); if (!this.history.length) throw Object.assign(new Error("There is no earlier Encounter composition to restore."), { code: "nothing_to_undo" }); this.redoHistory.push({ draft: this.draft, hazards: this.hazards }); const previous = this.history.pop(); this.draft = { ...previous.draft, revision: (this.draft.revision ?? 0) + 1 }; this.hazards = previous.hazards; }
   redo(expectedRevision = null) { this.check(expectedRevision); if (!this.redoHistory.length) throw Object.assign(new Error("There is no undone Encounter composition to restore."), { code: "nothing_to_redo" }); this.history.push({ draft: this.draft, hazards: this.hazards }); const next = this.redoHistory.pop(); this.draft = { ...next.draft, revision: (this.draft.revision ?? 0) + 1 }; this.hazards = next.hazards; }
-  encodedState() { return JSON.stringify({ draft: this.draft, hazards: this.hazards, history: this.history, redoHistory: this.redoHistory }); }
-  restore(encoded) { const state = typeof encoded === "string" ? JSON.parse(encoded) : encoded; this.draft = structuredClone(state.draft); this.hazards = structuredClone(state.hazards ?? []); this.history = structuredClone(state.history ?? []); this.redoHistory = structuredClone(state.redoHistory ?? []); }
+  encodedState() { return JSON.stringify({ draft: structuredClone(this.draft), hazards: this.hazards.map(taggedHazardSnapshot), history: this.history.map(taggedHazardCheckpoint), redoHistory: this.redoHistory.map(taggedHazardCheckpoint) }); }
+  restore(encoded) { const state = typeof encoded === "string" ? JSON.parse(encoded) : encoded; this.draft = structuredClone(state.draft); this.hazards = (state.hazards ?? []).map(untaggedHazardSnapshot); this.history = (state.history ?? []).map(untaggedHazardCheckpoint); this.redoHistory = (state.redoHistory ?? []).map(untaggedHazardCheckpoint); }
   record() { this.history.push({ draft: structuredClone(this.draft), hazards: structuredClone(this.hazards) }); }
   commit(origin) { this.draft.revision = (this.draft.revision ?? 0) + 1; this.draft.provenance = { ...(this.draft.provenance ?? {}), lastMutationOrigin: origin }; this.redoHistory = []; }
   check(expectedRevision) { if (expectedRevision != null && expectedRevision !== (this.draft.revision ?? 0)) throw Object.assign(new Error("The Encounter changed after it was inspected."), { code: "stale_revision", details: { expected_revision: String(expectedRevision), current_revision: String(this.draft.revision ?? 0) } }); }
@@ -205,9 +226,10 @@ export function createHazardBuilder({ root, hazard = createEmptySimpleHazard(), 
   if (!root) throw new Error("Simple Hazard builder requires a root element.");
   let current = structuredClone(hazard); let selectedParticipation = HAZARD_PARTICIPATION_MODES.includes(current.participation?.mode) ? current.participation.mode : (HAZARD_PARTICIPATION_MODES.includes(participation) ? participation : "avoidable"); let history = []; let redoHistory = [];
   const readiness = () => validateSimpleHazard(current);
+  const persistence = (origin = undefined) => ({ format: "sidekickdm-simple-hazard", formatVersion: 1, hazard: structuredClone(current), history: structuredClone(history), redoHistory: structuredClone(redoHistory), ...(origin === undefined ? {} : { origin }) });
   const emit = (origin, expectedRevision) => {
     onMutation({ command: "sidekickdm_create_simple_hazard", hazard: structuredClone(current), expected_hazard_revision: expectedRevision, origin });
-    onAutosave({ format: "sidekickdm-simple-hazard", format_version: 1, hazard: structuredClone(current), revision: current.revision, origin });
+    onAutosave(persistence(origin));
   };
   const mutate = (operation, origin = "gm") => { const before = structuredClone(current); const expected = Number(current.revision) || 0; const next = structuredClone(current); operation(next); next.revision = expected + 1; next.provenance = { ...(next.provenance ?? {}), mutationOrigin: origin }; history.push(before); redoHistory = []; current = next; emit(origin, expected); render(); };
   const render = () => {
@@ -229,7 +251,7 @@ export function createHazardBuilder({ root, hazard = createEmptySimpleHazard(), 
     get hazard() { return structuredClone(current); }, get revision() { return current.revision; }, get readiness() { return readiness(); }, render,
     setHazard(next, origin = "gm") { selectedParticipation = HAZARD_PARTICIPATION_MODES.includes(next?.participation?.mode) ? next.participation.mode : selectedParticipation; mutate((value) => Object.assign(value, structuredClone(next)), origin); },
     snapshot() { return structuredClone(current); },
-    autosave() { return { format: "sidekickdm-simple-hazard", format_version: 1, hazard: structuredClone(current), revision: current.revision }; },
+    autosave() { return persistence(); },
     undo() { if (history.length) { const expected = current.revision; redoHistory.push(structuredClone(current)); current = history.pop(); current.revision = expected + 1; emit("gm", expected); render(); } },
     redo() { if (redoHistory.length) { const expected = current.revision; history.push(structuredClone(current)); current = redoHistory.pop(); current.revision = expected + 1; emit("gm", expected); render(); } },
     destroy() { root.replaceChildren(); }

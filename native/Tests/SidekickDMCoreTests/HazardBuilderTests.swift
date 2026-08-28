@@ -45,7 +45,14 @@ final class HazardBuilderTests: XCTestCase {
         guard case .hazard(let quicksand)? = catalog.get("hazard/gm-core/quicksand/current") else { return XCTFail("Missing complex fixture") }
         let existing = ExistingComplexHazard(catalogHazard: quicksand)
         XCTAssertEqual(existing.identity.complexity, .complex)
-        XCTAssertEqual(existing.routine, "Pull creatures down on its initiative.")
+        XCTAssertNil(existing.routine)
+
+        let store = EncounterStore(catalog: catalog)
+        XCTAssertThrowsError(try SidekickCommandExecutor.execute(["command": "sidekickdm_add_existing_hazard", "content_id": quicksand.summary.contentID, "expected_revision": 0], in: store)) { error in
+            XCTAssertEqual((error as? SidekickDomainError)?.code, "catalog_entry_partial")
+        }
+        XCTAssertEqual(store.draft.revision, 0)
+        XCTAssertTrue(store.draft.hazards.isEmpty)
     }
 
     func testPlacementUsesParticipationCategoriesAndRevisionedUndoPersistence() throws {

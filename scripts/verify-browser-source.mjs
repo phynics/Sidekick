@@ -24,7 +24,7 @@ for (const file of [
   });
 }
 const app = await readFile("src/app.js", "utf8");
-for (const fragment of ["globalThis.sidekickBridge", "globalThis.sidekickDM", "Change Swift state", "loadBootAssets", "Swift-owned value"]) {
+for (const fragment of ["globalThis.sidekickBridge", "globalThis.sidekickDM", "Change Swift state", "loadBootAssets", "Swift-owned value", "data-catalog-filter", "data-catalog-page", "data-catalog-inspect", "Full Creature inspection", "catalogEntryCanAdd", "Add unavailable for unsupported or partial entries", "export-components-json", "export-components-zip", "export-library-json", "export-library-zip", "import-components-zip", "import-library-zip", "migrated v"]) {
   if (!app.includes(fragment)) throw new Error(`Browser boundary contract missing: ${fragment}`);
 }
 console.log("Browser source boundary passed.");

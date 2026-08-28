@@ -1,6 +1,16 @@
 Sidekick DM curated catalog
 
-Source: Foundry VTT PF2e data, current remaster records selected for the POC.
-License basis: ORC where marked in per-entry provenance.
-No images, portraits, maps, tokens, macros, or Foundry rule-element automation are redistributed.
-Review per-entry provenance and the final release notices before publication.
+Sidekick DM is an unofficial product and is not affiliated with, endorsed by, or sponsored by Paizo Inc. or Foundry VTT.
+
+This product is licensed under the ORC License located at the Library of Congress at TX 9-307-067 and available online at various locations including http://azoralaw.com/orclicense/ and others. All warranties are disclaimed as set forth therein.
+
+Included publication attribution:
+- Pathfinder GM Core © 2023, Paizo Inc.; Designers: Logan Bonner and Mark Seifter. Authors: Amirali Attar Olyaee, Logan Bonner, Creighton Broadhurst, Jason Bulmahn, James Case, Jesse Decker, Eleanor Ferron, Fabby Garza Marroquín, Jaym Gates, Matthew Goetz, James Jacobs, Brian R. James, Jenny Jarzabski, Dustin Knight, Jason LeMaitre, Lyz Liddell, Luis Loza, Stephen Radney-MacFarland, David N. Ross, Michael Sayre, Mark Seifter, Owen K.C. Stephens, Amber Stewart, Clark Valentine, Landon Winkler, and Linda Zayas-Palmer.
+- Pathfinder Monster Core © 2024 Paizo Inc.; Authors: Alexander Augunas, Dennis Baker, Kate Baker, Joshua Birdsong, Joseph Blomquist, Logan Bonner, Jason Bulmahn, James Case, John Compton, Paris Crenshaw, Adam Daigle, Darrin Drader, Brian Duckwitz, Robert N. Emerson, Scott Fernandez, Eleanor Ferron, Leo Glass, Matthew Goodall, BJ Hensley, Thurston Hillman, Vanessa Hoskins, James Jacobs, Jenny Jarzabski, Miko Kallio, Jason Keeley, Jeff Lee, Lyz Liddell, Luis Loza, Robert G. McCreary, Philippe-Antoine Menard, Jacob W. Michaels, Dave Nelson, Jason Nelson, Tim Nightengale, Stephen Radney-MacFarland, Mikhail Rekun, Patrick Renie, Alex Riggs, David N. Ross, Michael Sayre, Mark Seifter, Chris S. Sims, Amber Stewart, Jeffrey Swank, William Thompson, Jason Tondro, Clark Valentine, Landon Winkler, Tonya Woldridge, and Linda Zayas-Palmer.
+- Pathfinder NPC Core © 2025, Paizo Inc. Authors: Raychael Allor, Alexander Augunas, Rigby Bendele, Jesse Benner, John Bennett, Joshua Birdsong, Chris Bissette, Jeremy Blum, Logan Bonner, Clinton J. Boomer, Dan Cascone, Jessica Catalan, Paris Crenshaw, Katina Davis, Rue Dickey, Robert N. Emerson, Chris Eng, Eleanor Ferron, Josh Foster, Matthew Fu, Andrew D. Geels, T.H. Gulliver, Sen H.H.S., Kev Hamilton, Sasha Laranoa Harving, Katrina Hennessy, BJ Hensley, Vanessa Hoskins, Patrick Hurley, Sara Jeffers, Michelle Jones, Erik Keith, Michelle Y. Kim, Jason LeMaitre, Christiana Lewis, Luis Loza, Colm Lundberg, Maryssa Mari, Jacob W. Michaels, Zac Moran, Matt Morris, Patchen Mortimer, K. Tessa Newton, Stephen Radney-MacFarland, Jessica Redekop, Mikhail Rekun, Alistair Rigg, David N. Ross, Tony Saunders, Shay Snow, Joel Southall, Kendra Leigh Speedling, Levi Steadman, Christina Stiles, Kyle Tam, Jamie Trollope, Ruvaid Virk, Grady Wang, Andrew White, Jackson Wood, Isis Wozniakowska, and Basil Wright.
+
+Included rules data was extracted from the Foundry VTT PF2e system. The extraction source revision is recorded in the catalog manifest. Source: https://github.com/foundryvtt/pf2e at revision 4cbdaa37d6c33e9519561bae2c59a23e0288cbce.
+This catalog contains normalized rules data only. It does not redistribute portraits, art, tokens, maps, attachments, Foundry configuration, macros, or rule-element automation.
+
+Generator: GenerateSidekickDMCatalog 0.2.0.
+Catalog entries with unresolved nested publication or license metadata are retained for inspection but marked unsupported: 3.

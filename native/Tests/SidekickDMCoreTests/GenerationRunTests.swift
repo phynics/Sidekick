@@ -6,6 +6,13 @@ final class GenerationRunTests: XCTestCase {
         GenerationRunController(draft: EncounterDraft(id: "enc_run", constraintsRevision: 4), briefRevision: 3)
     }
 
+    private func controllerWithOpeningHazard() -> GenerationRunController {
+        let hazard = validHazard(id: "haz_opening")
+        let placed = EncounterHazard(id: hazard.id, contentID: "hazard/custom/\(hazard.id)/current", name: hazard.identity.name, level: hazard.identity.level, participation: Participation(mode: .mandatory), placement: "Opening area")
+        let draft = EncounterDraft(id: "enc_run", constraintsRevision: 4, hazards: [placed], customHazards: [hazard])
+        return GenerationRunController(draft: draft, briefRevision: 3)
+    }
+
     private func begin(_ store: GenerationRunController) throws -> String {
         try store.begin(encounterID: "enc_run", expectedEncounterRevision: 0, expectedBriefRevision: 3, expectedConstraintsRevision: 4, contentBoundariesAcknowledged: true, intentSummary: "Build a swamp ambush.", generationRunID: "run_test")
     }
@@ -111,6 +118,47 @@ final class GenerationRunTests: XCTestCase {
         XCTAssertEqual(store.draft.customHazards, [])
         XCTAssertEqual(store.draft.title, "The Bell Beneath Blackwater")
         XCTAssertEqual(store.draft.revision, 5)
+    }
+
+    func testCancelRestoresNonEmptyOpeningHazardAfterCreateUpdateAndRemove() throws {
+        let store = controllerWithOpeningHazard()
+        let opening = store.draft
+        let runID = try begin(store)
+        let hazard = validHazard()
+        try store.createSimpleHazard(hazard, participation: Participation(mode: .mandatory), placement: "Shrine entrance", encounterID: "enc_run", generationRunID: runID, expectedEncounterRevision: 1, expectedConstraintsRevision: 4)
+        var revised = validHazard()
+        revised.identity.name = "Mire Bell Snare Revised"
+        try store.updateSimpleHazard(revised, participation: Participation(mode: .avoidable), placement: "West arch", encounterID: "enc_run", generationRunID: runID, expectedEncounterRevision: 2, expectedConstraintsRevision: 4)
+        try store.removeSimpleHazard(id: hazard.id, encounterID: "enc_run", generationRunID: runID, expectedEncounterRevision: 3, expectedConstraintsRevision: 4)
+        try store.cancel(encounterID: "enc_run", generationRunID: runID, expectedEncounterRevision: 4)
+
+        var expected = opening
+        expected.revision = 5
+        XCTAssertEqual(store.draft, expected)
+    }
+
+    func testWholeRunUndoRestoresNonEmptyOpeningHazardAfterCreateUpdateAndRemove() throws {
+        let store = controllerWithOpeningHazard()
+        let opening = store.draft
+        let runID = try begin(store)
+        let hazard = validHazard()
+        try store.createSimpleHazard(hazard, participation: Participation(mode: .mandatory), placement: "Shrine entrance", encounterID: "enc_run", generationRunID: runID, expectedEncounterRevision: 1, expectedConstraintsRevision: 4)
+        var revised = validHazard()
+        revised.identity.name = "Mire Bell Snare Revised"
+        try store.updateSimpleHazard(revised, participation: Participation(mode: .avoidable), placement: "West arch", encounterID: "enc_run", generationRunID: runID, expectedEncounterRevision: 2, expectedConstraintsRevision: 4)
+        try store.removeSimpleHazard(id: hazard.id, encounterID: "enc_run", generationRunID: runID, expectedEncounterRevision: 3, expectedConstraintsRevision: 4)
+        try store.mutate(encounterID: "enc_run", generationRunID: runID, expectedEncounterRevision: 4, expectedConstraintsRevision: 4, description: "Authored packet") { draft in
+            let packet = self.completePacket()
+            draft.packetV1 = packet
+            draft.packet = packet.flattenedCorePacket()
+        }
+        try store.finish(encounterID: "enc_run", generationRunID: runID, expectedEncounterRevision: 5, expectedConstraintsRevision: 4)
+        try store.undo(expectedEncounterRevision: 6)
+
+        var expected = opening
+        expected.revision = 7
+        XCTAssertEqual(store.draft, expected)
+        XCTAssertFalse(store.canUndo)
     }
 
     func testSemanticPacketSectionsAndExistingParticipantRejectPartialCatalogEntries() throws {

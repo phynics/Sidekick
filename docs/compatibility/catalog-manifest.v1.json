@@ -1,16 +1,22 @@
 {
   "manifest_version": 1,
   "manifest_id": "sidekick-dm-p0-catalog-audit",
-  "status": "audit-only",
-  "generator": {"name": "Sidekick GenerateSidekickDMCatalog", "version": "not-yet-implemented"},
-  "source": {"system": "foundryvtt-pf2e", "revision": "4cbdaa37d6c33e9519561bae2c59a23e0288cbce", "revision_date": "2025-05-31T10:49:04-07:00"},
+  "status": "generated",
+  "generator": {"name": "GenerateSidekickDMCatalog", "version": "0.2.0"},
+  "generator_revision": "0.2.0",
+  "source": {"system": "foundryvtt-pf2e", "repository": "https://github.com/foundryvtt/pf2e", "revision": "4cbdaa37d6c33e9519561bae2c59a23e0288cbce", "revision_date": "2025-05-31T10:49:04-07:00", "attribution": "Foundry VTT PF2e system, used as the technical extraction source."},
   "counts": {"monster_core": 492, "npc_core": 270, "gm_core_hazards": 32, "p0_total": 794},
   "source_files": [
     {"pack": "pathfinder-monster-core", "license_basis": "ORC", "remaster": true, "count": 492, "level_min": -1, "level_max": 25},
     {"pack": "pathfinder-npc-core", "license_basis": "ORC", "remaster": true, "count": 270, "level_min": -1, "level_max": 19},
     {"pack": "hazards", "publication": "Pathfinder GM Core", "license_basis": "ORC", "remaster": true, "count": 32, "level_min": 0, "level_max": 23}
   ],
-  "provenance_fields_required": ["source_title", "source_page_if_known", "edition", "upstream.system", "upstream.pack", "upstream.identifier", "source_sha256", "license_basis", "nested_items[].publication", "notices", "diagnostics"],
+  "publication_attributions": ["Pathfinder GM Core", "Pathfinder Monster Core", "Pathfinder NPC Core"],
+  "extraction_attribution_required": ["system", "repository", "revision", "source_file", "source_sha256", "method"],
+  "asset_boundary": {"included": ["normalized creature and hazard rules data"], "excluded": ["portraits", "art", "tokens", "maps", "attachments", "Foundry configuration", "macros", "rule-element automation"]},
+  "provenance_fields_required": ["source_title", "source_page_if_known", "source_file", "source_revision", "edition", "upstream.system", "upstream.pack", "upstream.identifier", "source_sha256", "license_basis", "publication_attribution", "extraction_attribution", "nested_items[].publication", "nested_license_mismatches", "notices", "diagnostics"],
+  "nested_license_policy": {"action": "unsupported", "rule": "A missing or mismatched nested publication/license record cannot enter a ready encounter."},
+  "manifest_fields_required": ["manifest_version", "catalog_id", "fixture_version", "generator", "generator_revision", "source", "source_revision", "publication_attributions", "asset_boundary", "notices", "artifacts", "counts", "required_entry_metadata"],
   "determinism_contract": {"encoding": "UTF-8 JSON, sorted keys, stable array order, trailing newline", "generated_at": "must be supplied by build, never inferred from wall clock for fixture comparison", "artifacts": ["sidekickdm-catalog.v1.json", "catalog-manifest.v1.json", "NOTICE.txt"]},
-  "known_unknowns": ["source pages are absent from local Foundry records", "role and environment facets require curation", "HTML/enrichment normalization requires a generator", "no executable Sidekick catalog scaffold currently exists"]
+  "known_unknowns": ["source pages are absent from local Foundry records", "role and environment facets require curation", "HTML/enrichment normalization is limited to the selected fixture records", "three selected GM Core hazards retain unresolved nested OGL records and are unsupported"]
 }

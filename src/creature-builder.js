@@ -112,7 +112,8 @@ export function createCreatureBuilder({ root, creature = createEmptyOriginalCrea
   if (!root) throw new Error("Original Creature builder requires a root element.");
   let current = normalizeCreature(creature), history = [], redoHistory = [];
   const readiness = () => validateOriginalCreature(current);
-  const emit = (origin) => { const event = { command: "sidekickdm_create_custom_creature", creature: structuredClone(current), expected_creature_revision: current.revision, origin }; onMutation(event); onAutosave({ format: "sidekickdm-original-creature", format_version: 1, creature: structuredClone(current), revision: current.revision, origin }); };
+  const persistence = (origin = undefined) => ({ format: "sidekickdm-original-creature", formatVersion: 1, creature: structuredClone(current), history: structuredClone(history), redoHistory: structuredClone(redoHistory), ...(origin === undefined ? {} : { origin }) });
+  const emit = (origin) => { const event = { command: "sidekickdm_create_custom_creature", creature: structuredClone(current), expected_creature_revision: current.revision, origin }; onMutation(event); onAutosave(persistence(origin)); };
   const render = () => {
     const result = readiness(); const fields = current.identity; const benchmark = benchmarkFor(fields.level);
     const structuralMarkup = result.structuralErrors.map((item) => `<li data-kind="structural-error" data-field="${escapeHTML(item.field)}">${escapeHTML(item.message)}</li>`).join("");
@@ -138,7 +139,7 @@ export function createCreatureBuilder({ root, creature = createEmptyOriginalCrea
     root.querySelector('[data-action="add"]').addEventListener("click", () => onAddToEncounter({ creature: structuredClone(current), xp: projectCreatureXP(current.identity.level, partyLevel) }));
   };
   render();
-  return { get creature() { return structuredClone(current); }, get revision() { return current.revision; }, get readiness() { return readiness(); }, render, setCreature(next, origin = "gm") { history.push(structuredClone(current)); current = normalizeCreature(next); current.revision = (Number(current.revision) || 0) + 1; redoHistory = []; emit(origin); render(); }, loadCreature(next, origin = "gm") { this.setCreature(next, origin); }, autosave() { return { format: "sidekickdm-original-creature", format_version: 1, creature: structuredClone(current), revision: current.revision }; }, destroy() { root.replaceChildren(); } };
+  return { get creature() { return structuredClone(current); }, get revision() { return current.revision; }, get readiness() { return readiness(); }, render, setCreature(next, origin = "gm") { history.push(structuredClone(current)); current = normalizeCreature(next); current.revision = (Number(current.revision) || 0) + 1; redoHistory = []; emit(origin); render(); }, loadCreature(next, origin = "gm") { this.setCreature(next, origin); }, autosave() { return persistence(); }, destroy() { root.replaceChildren(); } };
 }
 
 export const validateCreature = validateOriginalCreature;

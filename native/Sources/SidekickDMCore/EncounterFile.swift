@@ -414,26 +414,30 @@ public enum EncounterFileCodec {
         guard case let .string(exportKind)? = migrated["export_kind"], let kind = EncounterFileExportKind(rawValue: exportKind), case let .object(dataObject)? = migrated["data"] else { return }
         if kind == .components {
             guard case let .object(components)? = dataObject["components"] else { throw EncounterFileError.invalidPayload("components data is required.") }
-            _ = try decodeComponents(components)
+            let parsed = try decodeComponents(components)
+            try validateGlobalIDs(components: parsed, attachments: dataObject["attachments"])
             return
         }
         if kind == .library {
             guard case let .array(encounters)? = dataObject["encounters"] else { throw EncounterFileError.invalidPayload("encounters must be an array.") }
             let components: [String: AnyCodable] = ["creatures": dataObject["creatures"] ?? .array([]), "npc_profiles": dataObject["npc_profiles"] ?? .array([]), "hazards": dataObject["hazards"] ?? .array([]), "party_profiles": dataObject["party_profiles"] ?? .array([])]
-            _ = try decodeComponents(components)
+            let parsed = try decodeComponents(components)
+            var registry = IDRegistry()
+            try register(components: parsed, in: &registry)
+            try register(attachments: dataObject["attachments"], in: &registry)
             for value in encounters {
                 guard case let .object(encounter) = value else { throw EncounterFileError.invalidPayload("Library encounters must be objects.") }
                 let draft = try decodeDraft(encounter: encounter)
                 try validateReferences(draft: draft)
-            }
+                try register(draft: draft, in: &registry)
+                }
             return
         }
         guard case let .number(version)? = migrated["format_version"] else { throw EncounterFileError.invalidEnvelope("format_version is required") }
-        guard Int(version) == supportedVersion else { throw EncounterFileError.unsupportedVersion(Int(version)) }
+        guard Int(exactly: version) == supportedVersion else { throw EncounterFileError.unsupportedVersion(Int(version)) }
         guard case let .object(dataObject)? = migrated["data"] else { throw EncounterFileError.invalidEnvelope("data is required") }
         guard case let .object(encounter)? = dataObject["encounter"] else { throw EncounterFileError.invalidPayload("encounter is required") }
-        _ = try validateReferences(encounter: encounter, embedded: dataObject["embedded_components"])
-        _ = try decodeDraft(encounter: encounter)
+        _ = try validateReferences(encounter: encounter, embedded: dataObject["embedded_components"], attachments: dataObject["attachments"])
     }
 
     public static func importDraft(_ data: Data, existingIDs: Set<String> = [], importedAt: String = "1970-01-01T00:00:00Z") throws -> EncounterFileImportResult {
@@ -442,15 +446,18 @@ public enum EncounterFileCodec {
         try validateEnvelope(migrated)
         guard case let .string(exportKind)? = migrated["export_kind"], exportKind == EncounterFileExportKind.encounter.rawValue else { throw EncounterFileError.invalidPayload("Only encounter exports can be imported as an Encounter Draft.") }
         guard case let .number(version)? = migrated["format_version"] else { throw EncounterFileError.invalidEnvelope("format_version is required") }
-        guard Int(version) == supportedVersion else { throw EncounterFileError.unsupportedVersion(Int(version)) }
+        guard Int(exactly: version) == supportedVersion else { throw EncounterFileError.unsupportedVersion(Int(version)) }
         guard case let .object(dataObject)? = migrated["data"], case let .object(encounter)? = dataObject["encounter"] else { throw EncounterFileError.invalidPayload("Encounter data is required.") }
-        let embedded = try validateReferences(encounter: encounter, embedded: dataObject["embedded_components"])
+        let embedded = try validateReferences(encounter: encounter, embedded: dataObject["embedded_components"], attachments: dataObject["attachments"])
         var draft = try decodeDraft(encounter: encounter)
         // Decode every embedded typed record before producing a result. The
         // memory store writes only after this complete decode and validation.
-        draft.originalCreatures = embedded.creatures
-        draft.customHazards = embedded.hazards
-        draft.npcProfiles = embedded.npcProfiles
+        // Older durable drafts can carry the component arrays on the
+        // encounter itself while leaving the embedded arrays empty. Preserve
+        // those records when no canonical embedded replacement is present.
+        if !embedded.creatures.isEmpty { draft.originalCreatures = embedded.creatures }
+        if !embedded.hazards.isEmpty { draft.customHazards = embedded.hazards }
+        if !embedded.npcProfiles.isEmpty { draft.npcProfiles = embedded.npcProfiles }
         let existingCatalogEntries = draft.embeddedCatalogEntries ?? []
         draft.embeddedCatalogEntries = mergeCatalogEntries(existingCatalogEntries + embedded.embeddedCatalogEntries)
         try validateReferences(draft: draft)
@@ -474,6 +481,7 @@ public enum EncounterFileCodec {
         guard case let .object(dataObject)? = root["data"], case let .object(components)? = dataObject["components"] else { throw EncounterFileError.invalidPayload("components data is required.") }
         let parsed = try decodeComponents(components)
         let ids = try componentIDs(parsed)
+        try validateGlobalIDs(components: parsed, attachments: dataObject["attachments"])
         let remapped = remappedIDs(for: ids, existingIDs: existingIDs)
         return EncounterFileComponentsImportResult(components: remapComponents(parsed, IDs: remapped, importedAt: importedAt), remappedIDs: remapped, importedAt: importedAt, sourceFormatVersion: 1)
     }
@@ -500,6 +508,10 @@ public enum EncounterFileCodec {
             try validateReferences(draft: draft)
             encounters.append(draft)
         }
+        var registry = IDRegistry()
+        try register(components: parsed, in: &registry)
+        try register(attachments: dataObject["attachments"], in: &registry)
+        for encounter in encounters { try register(draft: encounter, in: &registry) }
         var allIDs = try componentIDs(parsed)
         for encounter in encounters { allIDs.formUnion(IDs.inEncounter(encounter)) }
         let remapped = remappedIDs(for: allIDs, existingIDs: existingIDs)
@@ -541,10 +553,10 @@ public enum EncounterFileCodec {
 
     private static func validateEnvelope(_ root: [String: AnyCodable]) throws {
         guard case let .string(format)? = root["format"], format == Self.format else { throw EncounterFileError.invalidEnvelope("format must be sidekickdm") }
-        guard case let .number(version)? = root["format_version"] else { throw EncounterFileError.invalidEnvelope("format_version is required") }
-        guard Int(version) == supportedVersion else { throw EncounterFileError.unsupportedVersion(Int(version)) }
+        let version = try integerVersion(root["format_version"])
+        guard version == supportedVersion else { throw EncounterFileError.unsupportedVersion(version) }
         guard case let .string(kind)? = root["export_kind"], EncounterFileExportKind(rawValue: kind) != nil else { throw EncounterFileError.invalidEnvelope("export_kind must be encounter, components, or library") }
-        guard case .string? = root["exported_at"] else { throw EncounterFileError.invalidEnvelope("exported_at is required") }
+        guard case let .string(exportedAt)? = root["exported_at"], !exportedAt.isEmpty else { throw EncounterFileError.invalidEnvelope("exported_at is required") }
         guard case .object? = root["data"] else { throw EncounterFileError.invalidEnvelope("data is required") }
     }
 
@@ -749,19 +761,98 @@ public enum EncounterFileCodec {
         return result
     }
 
+    private static func integerVersion(_ value: AnyCodable?) throws -> Int {
+        guard case let .number(number)? = value, let version = Int(exactly: number) else {
+            throw EncounterFileError.invalidEnvelope("format_version is required")
+        }
+        return version
+    }
+
     private static func migrate(_ root: [String: AnyCodable]) throws -> [String: AnyCodable] {
-        guard case let .number(version) = root["format_version"] ?? root["version"] else { throw EncounterFileError.invalidEnvelope("format_version is required") }
-        let numericVersion = Int(version)
+        let numericVersion = try integerVersion(root["format_version"] ?? root["version"])
         if numericVersion > supportedVersion { throw EncounterFileError.futureMajorVersion(numericVersion) }
         if numericVersion < 0 { throw EncounterFileError.unsupportedVersion(numericVersion) }
         if numericVersion == supportedVersion { return root }
         return try EncounterFileV0ToV1Migration().migrate(root)
     }
 
-    @discardableResult
-    private static func validateReferences(encounter: [String: AnyCodable], embedded: AnyCodable?) throws -> EncounterFileComponents {
+    private struct IDRegistry {
+        private var ids = Set<String>()
+
+        mutating func insert(_ id: String, kind: String) throws {
+            guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw EncounterFileError.invalidPayload("\(kind) requires a non-empty id.")
+            }
+            guard ids.insert(id).inserted else { throw EncounterFileError.duplicateID(id) }
+        }
+    }
+
+    private static func register(draft: EncounterDraft, in registry: inout IDRegistry) throws {
+        try registry.insert(draft.id, kind: "Encounter")
+        for item in draft.participantGroups { try registry.insert(item.id, kind: "Participant Group") }
+        let placedHazardIDs = Set(draft.hazards.map(\.id))
+        for item in draft.hazards { try registry.insert(item.id, kind: "Encounter Hazard") }
+        // The structured phase array is the richer representation of the
+        // legacy phase array.  Exported drafts may contain both mirrors with
+        // the same IDs; register that logical phase only once while still
+        // rejecting duplicate IDs within either representation and across all
+        // other kinds.
+        var phaseIDs = Set<String>()
+        for item in draft.phases {
+            try registry.insert(item.id, kind: "Phase")
+            phaseIDs.insert(item.id)
+        }
+        for item in draft.structuredPhases ?? [] where !phaseIDs.contains(item.id) {
+            try registry.insert(item.id, kind: "Structured Phase")
+        }
+        for item in draft.originalCreatures ?? [] { try registry.insert(item.id, kind: "Original Creature") }
+        var customHazardIDs = Set<String>()
+        for item in draft.customHazards ?? [] {
+            guard customHazardIDs.insert(item.id).inserted else { throw EncounterFileError.duplicateID(item.id) }
+            // A self-contained Encounter stores the authored custom Hazard
+            // beside its placed Encounter Hazard. They are one logical
+            // record and intentionally share an ID.
+            if !placedHazardIDs.contains(item.id) { try registry.insert(item.id, kind: "Simple Hazard") }
+        }
+        for item in draft.npcProfiles ?? [] { try registry.insert(item.id, kind: "NPC Profile") }
+        for value in draft.embeddedCatalogEntries ?? [] {
+            guard case let .object(object) = value else { throw EncounterFileError.invalidPayload("Embedded catalog entries must be objects.") }
+            if case let .string(id)? = object["id"] { try registry.insert(id, kind: "Catalog Entry") }
+        }
+    }
+
+    private static func register(components: EncounterFileComponents, in registry: inout IDRegistry) throws {
+        for item in components.creatures { try registry.insert(item.id, kind: "Creature") }
+        for item in components.npcProfiles { try registry.insert(item.id, kind: "NPC Profile") }
+        for item in components.hazards { try registry.insert(item.id, kind: "Hazard") }
+        for value in components.embeddedCatalogEntries {
+            guard case let .object(object) = value else { throw EncounterFileError.invalidPayload("Embedded catalog entries must be objects.") }
+            if case let .string(id)? = object["id"] { try registry.insert(id, kind: "Catalog Entry") }
+        }
+        for value in components.partyProfiles {
+            if case let .object(object) = value, case let .string(id)? = object["id"] { try registry.insert(id, kind: "Party Profile") }
+        }
+    }
+
+    private static func register(attachments value: AnyCodable?, in registry: inout IDRegistry) throws {
+        guard case let .array(attachments) = value ?? .array([]) else { throw EncounterFileError.invalidPayload("attachments must be an array.") }
+        for attachment in attachments {
+            guard case let .object(object) = attachment, case let .string(id)? = object["id"] else {
+                throw EncounterFileError.invalidPayload("Attachment metadata requires an id.")
+            }
+            try registry.insert(id, kind: "Attachment")
+        }
+    }
+
+    private static func validateGlobalIDs(components: EncounterFileComponents, attachments: AnyCodable?) throws {
+        var registry = IDRegistry()
+        try register(components: components, in: &registry)
+        try register(attachments: attachments, in: &registry)
+    }
+
+    private static func validateReferences(encounter: [String: AnyCodable], embedded: AnyCodable?, attachments: AnyCodable? = nil) throws -> EncounterFileComponents {
         guard case let .string(objectType) = encounter["object_type"] ?? .string("encounter"), objectType == "encounter" || objectType.isEmpty else { throw EncounterFileError.invalidPayload("Unsupported object type.") }
-        guard case let .number(objectVersion) = encounter["object_version"] ?? .number(1), Int(objectVersion) == 1 else { throw EncounterFileError.unsupportedVersion(2) }
+        guard case let .number(objectVersion) = encounter["object_version"] ?? .number(1), Int(exactly: objectVersion) == 1 else { throw EncounterFileError.unsupportedVersion(2) }
         guard case let .array(groups) = encounter["participant_groups"] ?? .array([]) else { throw EncounterFileError.invalidPayload("participant_groups must be an array.") }
         guard case let .array(hazards) = encounter["hazards"] ?? .array([]) else { throw EncounterFileError.invalidPayload("hazards must be an array.") }
         guard case let .array(phases) = encounter["phases"] ?? .array([]) else { throw EncounterFileError.invalidPayload("phases must be an array.") }
@@ -792,7 +883,9 @@ public enum EncounterFileCodec {
         guard case let .object(values) = embedded ?? .object([:]) else { throw EncounterFileError.invalidPayload("embedded_components must be an object.") }
         embeddedValues = values
         let decodedComponents = try decodeComponents(embeddedValues, requirePartyProfiles: false)
-        for id in try componentIDs(decodedComponents) where !ids.insert(id).inserted {
+        let embeddedCustomHazardIDs = Set(decodedComponents.hazards.map(\.id))
+        let placedHazardIDs = hazardIDs
+        for id in try componentIDs(decodedComponents) where !(placedHazardIDs.contains(id) && embeddedCustomHazardIDs.contains(id)) && !ids.insert(id).inserted {
             // A catalog snapshot may be repeated in both its legacy
             // kind-specific list and embedded_catalog_entries. The decoder
             // deduplicates those records before IDs are checked.
@@ -823,6 +916,15 @@ public enum EncounterFileCodec {
                 }
             }
         }
+        var draft = try decodeDraft(encounter: encounter)
+        if !decodedComponents.creatures.isEmpty { draft.originalCreatures = decodedComponents.creatures }
+        if !decodedComponents.hazards.isEmpty { draft.customHazards = decodedComponents.hazards }
+        if !decodedComponents.npcProfiles.isEmpty { draft.npcProfiles = decodedComponents.npcProfiles }
+        draft.embeddedCatalogEntries = mergeCatalogEntries((draft.embeddedCatalogEntries ?? []) + decodedComponents.embeddedCatalogEntries)
+        try validateReferences(draft: draft)
+        var registry = IDRegistry()
+        try register(draft: draft, in: &registry)
+        try register(attachments: attachments, in: &registry)
         return decodedComponents
     }
 
@@ -834,10 +936,15 @@ public enum EncounterFileCodec {
     }
 
     private static func validateReferences(draft: EncounterDraft) throws {
+        var registry = IDRegistry()
+        try register(draft: draft, in: &registry)
         let groupIDs = Set(draft.participantGroups.map(\.id))
         let hazardIDs = Set(draft.hazards.map(\.id))
-        let phaseIDs = Set(draft.phases.map(\.id))
         for phase in draft.phases {
+            guard phase.participantIDs.allSatisfy(groupIDs.contains) else { throw EncounterFileError.invalidReference("Phase \(phase.id) references an unknown Participant Group.") }
+            guard phase.hazardIDs.allSatisfy(hazardIDs.contains) else { throw EncounterFileError.invalidReference("Phase \(phase.id) references an unknown Hazard.") }
+        }
+        for phase in draft.structuredPhases ?? [] {
             guard phase.participantIDs.allSatisfy(groupIDs.contains) else { throw EncounterFileError.invalidReference("Phase \(phase.id) references an unknown Participant Group.") }
             guard phase.hazardIDs.allSatisfy(hazardIDs.contains) else { throw EncounterFileError.invalidReference("Phase \(phase.id) references an unknown Hazard.") }
         }
@@ -937,6 +1044,7 @@ public enum EncounterFileCodec {
             if character == "_" { uppercase = true } else if uppercase { result.append(contentsOf: character.uppercased()); uppercase = false } else { result.append(character) }
         }
         if result.hasSuffix("Id") { return String(result.dropLast(2)) + "ID" }
+        if result.hasSuffix("Json") { return String(result.dropLast(4)) + "JSON" }
         return result
     }
 
@@ -950,8 +1058,15 @@ public enum EncounterFileCodec {
 
     private enum IDs {
         static func inEncounter(_ draft: EncounterDraft) -> Set<String> {
-            var ids = Set([draft.id]); ids.formUnion(draft.participantGroups.map(\.id)); ids.formUnion(draft.hazards.map(\.id)); ids.formUnion(draft.phases.map(\.id)); ids.formUnion((draft.originalCreatures ?? []).map(\.id)); ids.formUnion((draft.customHazards ?? []).map(\.id)); ids.formUnion((draft.npcProfiles ?? []).map(\.id));
+            inEncounter(draft, includeOpeningSnapshot: true)
+        }
+
+        private static func inEncounter(_ draft: EncounterDraft, includeOpeningSnapshot: Bool) -> Set<String> {
+            var ids = Set([draft.id]); ids.formUnion(draft.participantGroups.map(\.id)); ids.formUnion(draft.hazards.map(\.id)); ids.formUnion(draft.phases.map(\.id)); ids.formUnion((draft.structuredPhases ?? []).map(\.id)); ids.formUnion((draft.originalCreatures ?? []).map(\.id)); ids.formUnion((draft.customHazards ?? []).map(\.id)); ids.formUnion((draft.npcProfiles ?? []).map(\.id));
             for value in draft.embeddedCatalogEntries ?? [] { collectIDs(from: value, into: &ids) }
+            if includeOpeningSnapshot, let encoded = draft.generation?.openingDraftJSON, let data = encoded.data(using: .utf8), let opening = try? JSONDecoder().decode(EncounterDraft.self, from: data) {
+                ids.formUnion(inEncounter(opening, includeOpeningSnapshot: false))
+            }
             return ids
         }
 
@@ -968,15 +1083,27 @@ public enum EncounterFileCodec {
     }
 
     private static func remap(_ draft: EncounterDraft, IDs: [String: String], importedAt: String) -> EncounterDraft {
+        remap(draft, IDs: IDs, importedAt: importedAt, remapOpeningSnapshot: true)
+    }
+
+    private static func remap(_ draft: EncounterDraft, IDs: [String: String], importedAt: String, remapOpeningSnapshot: Bool) -> EncounterDraft {
         var value = draft
         if let replacement = IDs[value.id] { value.id = replacement }
         value.participantGroups = value.participantGroups.map { var item = $0; if let replacement = IDs[item.id] { item.id = replacement }; return item }
         value.hazards = value.hazards.map { var item = $0; if let replacement = IDs[item.id] { item.id = replacement }; return item }
         value.phases = value.phases.map { var item = $0; if let replacement = IDs[item.id] { item.id = replacement }; item.participantIDs = item.participantIDs.map { IDs[$0] ?? $0 }; item.hazardIDs = item.hazardIDs.map { IDs[$0] ?? $0 }; return item }
+        value.structuredPhases = value.structuredPhases?.map { var item = $0; if let replacement = IDs[item.id] { item.id = replacement }; item.participantIDs = item.participantIDs.map { IDs[$0] ?? $0 }; item.hazardIDs = item.hazardIDs.map { IDs[$0] ?? $0 }; return item }
         value.originalCreatures = value.originalCreatures?.map { var item = $0; if let replacement = IDs[item.id] { item.id = replacement }; item.provenance.origin = "imported"; item.provenance.createdAt = importedAt; return item }
         value.customHazards = value.customHazards?.map { var item = $0; if let replacement = IDs[item.id] { item.id = replacement }; item.provenance.origin = "imported"; item.provenance.createdAt = importedAt; return item }
         value.npcProfiles = value.npcProfiles?.map { var item = $0; if let replacement = IDs[item.id] { item.id = replacement }; if let participantID = item.participantGroupID { item.participantGroupID = IDs[participantID] ?? participantID }; item.provenance.origin = NPCProfileOrigin.imported.rawValue; item.provenance.createdAt = importedAt; item.provenance.lastMutationOrigin = "import"; return item }
         value.embeddedCatalogEntries = value.embeddedCatalogEntries?.map { remapAnyCodable($0, IDs: IDs) }
+        if remapOpeningSnapshot, !IDs.isEmpty, var generation = value.generation, let encoded = generation.openingDraftJSON, let data = encoded.data(using: .utf8), let opening = try? JSONDecoder().decode(EncounterDraft.self, from: data) {
+            let remappedOpening = remap(opening, IDs: IDs, importedAt: importedAt, remapOpeningSnapshot: false)
+            if let remappedData = try? JSONEncoder().encode(remappedOpening), let remappedJSON = String(data: remappedData, encoding: .utf8) {
+                generation.openingDraftJSON = remappedJSON
+                value.generation = generation
+            }
+        }
         value.provenance.origin = "imported"; value.provenance.lastMutationOrigin = "import"
         return value
     }

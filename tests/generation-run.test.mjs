@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { GenerationRunController, GenerationRunError, GENERATION_RUN_STATES } from "../src/generation-run.js";
+import { createComponentsFile, MemoryLibraryStore } from "../src/encounter-file.js";
 
 function controller() {
   return new GenerationRunController({
@@ -77,6 +78,42 @@ function validHazard(id = "haz_run") {
   };
 }
 
+function openingHazard() {
+  const hazard = validHazard("haz_opening");
+  hazard.identity.name = "Opening Mire Snare";
+  return hazard;
+}
+
+function controllerWithOpeningHazard() {
+  const store = controller();
+  const hazard = openingHazard();
+  store.draft.customHazards = [structuredClone(hazard)];
+  store.draft.hazards = [{
+    id: hazard.id,
+    contentID: `hazard/custom/${hazard.id}/current`,
+    name: hazard.identity.name,
+    level: hazard.identity.level,
+    complexity: hazard.identity.complexity,
+    participation: { mode: "mandatory", condition: null },
+    placement: "Opening area"
+  }];
+  return store;
+}
+
+function mutateCreatedHazard(store) {
+  const created = store.createSimpleHazard({
+    ...beginInput(), expected_encounter_revision: 1, hazard: validHazard(),
+    participation_mode: "mandatory", placement: "Shrine entrance"
+  });
+  const revised = validHazard();
+  revised.identity.name = "Mire Bell Snare Revised";
+  store.updateSimpleHazard({
+    ...beginInput(), expected_encounter_revision: 2, hazard: revised,
+    participation: { mode: "avoidable" }, placement: "West arch"
+  });
+  store.removeSimpleHazard({ ...beginInput(), expected_encounter_revision: 3, hazard_id: created.id });
+}
+
 test("begin requires encounter, brief, constraints, and boundary acknowledgement", () => {
   const store = controller();
   assert.throws(() => store.begin({ ...beginInput(), expected_encounter_revision: 1 }), (error) => error instanceof GenerationRunError && error.code === "stale_revision");
@@ -140,6 +177,50 @@ test("Simple Hazard validation is read-only and its lifecycle is transactional",
   assert.equal(store.encounterRevision, 4);
   store.cancel({ ...beginInput(), expected_encounter_revision: 4 });
   assert.deepEqual(store.draft.hazards, []);
+});
+
+test("removing an encounter Hazard leaves its reusable library record intact", () => {
+  const reusable = openingHazard();
+  const library = new MemoryLibraryStore();
+  library.importComponents(createComponentsFile({ components: { hazards: [reusable] } }));
+  const libraryRecord = structuredClone(library.hazards.get(reusable.id));
+  const store = controllerWithOpeningHazard();
+  begin(store);
+
+  store.removeSimpleHazard({ ...beginInput(), expected_encounter_revision: 1, hazard_id: reusable.id });
+
+  assert.deepEqual(library.hazards.get(reusable.id), libraryRecord);
+  assert.deepEqual(store.draft.customHazards, []);
+  assert.deepEqual(store.draft.hazards, []);
+});
+
+test("cancel restores the complete non-empty pre-run Hazard state after create, update, and remove", () => {
+  const store = controllerWithOpeningHazard();
+  const opening = structuredClone(store.draft);
+  begin(store);
+  mutateCreatedHazard(store);
+
+  store.cancel({ ...beginInput(), expected_encounter_revision: 4 });
+
+  assert.deepEqual({ ...store.draft, revision: 0 }, { ...opening, revision: 0, generation: null });
+  assert.equal(store.draft.revision, 5);
+});
+
+test("whole-run Undo restores the complete non-empty pre-run Hazard state after create, update, and remove", () => {
+  const store = controllerWithOpeningHazard();
+  const opening = structuredClone(store.draft);
+  begin(store);
+  mutateCreatedHazard(store);
+  store.mutate({ ...beginInput(), expected_encounter_revision: 4, description: "Authored packet", operation: (draft) => {
+    draft.packetV1 = completePacket();
+    draft.packet = completePacket();
+  } });
+  store.finish({ ...beginInput(), expected_encounter_revision: 5 });
+  store.undo({ expectedEncounterRevision: 6 });
+
+  assert.deepEqual({ ...store.draft, revision: 0 }, { ...opening, revision: 0, generation: null });
+  assert.equal(store.draft.revision, 7);
+  assert.equal(store.canUndo, false);
 });
 
 test("semantic Existing Participant and Packet section tools reject partial content", () => {

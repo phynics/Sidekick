@@ -592,8 +592,15 @@ public final class CatalogCompositionStore: @unchecked Sendable {
     }
 
     private func nextComponentID() -> String {
-        var index = draft.participantGroups.count + 1
-        while draft.participantGroups.contains(where: { $0.id == "cmp_catalog_\(index)" }) { index += 1 }
+        var ids = Set(draft.participantGroups.map(\.id))
+        ids.formUnion(draft.hazards.map(\.id))
+        ids.formUnion(draft.phases.map(\.id))
+        ids.formUnion((draft.originalCreatures ?? []).map(\.id))
+        ids.formUnion((draft.customHazards ?? []).map(\.id))
+        ids.formUnion((draft.npcProfiles ?? []).map(\.id))
+        ids.formUnion((draft.structuredPhases ?? []).map(\.id))
+        var index = 1
+        while ids.contains("cmp_catalog_\(index)") { index += 1 }
         return "cmp_catalog_\(index)"
     }
 
@@ -606,21 +613,31 @@ public final class CatalogCompositionStore: @unchecked Sendable {
 public enum CatalogFixture {
     public static func demo() -> SidekickCatalog {
         let sourceRevision = "4cbdaa37d6c33e9519561bae2c59a23e0288cbce"
-        func provenance(_ pack: String, _ identifier: String) -> CatalogProvenance {
-            CatalogProvenance(sourceTitle: pack == "pathfinder-monster-core" ? "Pathfinder Monster Core" : "Pathfinder GM Core", upstreamPack: pack, upstreamIdentifier: identifier, sourceSHA256: String(repeating: "0", count: 64), notices: ["ORC"])
+        func provenance(_ sourceTitle: String, _ pack: String, _ identifier: String, _ sourceSHA256: String, diagnostics: [String] = []) -> CatalogProvenance {
+            CatalogProvenance(sourceTitle: sourceTitle, upstreamPack: pack, upstreamIdentifier: identifier, sourceSHA256: sourceSHA256, notices: ["ORC"], diagnostics: diagnostics)
         }
-        let goblinID = "creature/monster-core/goblin-warrior/current"
-        let goblinSummary = CatalogEntrySummary(contentID: goblinID, kind: .creature, name: "Goblin Warrior", level: -1, traits: ["goblin", "humanoid"], source: "Pathfinder Monster Core", environments: ["forest", "underground"], roles: [.skirmisher], spellcasting: false, summary: "A quick-footed goblin that fights best with allies.")
-        let goblin = CatalogCreature(summary: goblinSummary, concept: "A frontline goblin raider", size: "small", perception: 2, senses: ["darkvision"], languages: ["common", "goblin"], defenses: ["ac": 16, "hp": 6, "fortitude": 5, "reflex": 7, "will": 3], speeds: ["land": 25], strikes: [CatalogStrike(name: "Dogslicer", attack: 5, damage: "1d6+1", traits: ["agile", "finesse"])], abilities: [CatalogAbility(name: "Goblin Scuttle", actionCost: "reaction", text: "Step when a goblin ally ends a move adjacent.")], tactics: "Use cover and numbers.", morale: "Flee when outnumbered.", provenance: provenance("pathfinder-monster-core", "goblin-warrior"))
-        let bogID = "creature/monster-core/bog-strider/current"
-        let bogSummary = CatalogEntrySummary(contentID: bogID, kind: .creature, name: "Bog Strider", level: 5, traits: ["amphibious", "fey"], source: "Pathfinder Monster Core", environments: ["aquatic", "forest"], roles: [.skirmisher], spellcasting: false, summary: "A mobile swamp skirmisher that uses difficult terrain.")
-        let bog = CatalogCreature(summary: bogSummary, concept: "A mobile swamp skirmisher", size: "medium", defenses: ["ac": 22, "hp": 80], speeds: ["land": 25, "swim": 30], tactics: "Circle isolated targets through the water.", morale: "Withdraw when badly wounded.", provenance: provenance("pathfinder-monster-core", "bog-strider"))
-        let hazardID = "hazard/gm-core/electric-latch-rune/current"
-        let hazardSummary = CatalogEntrySummary(contentID: hazardID, kind: .hazard, name: "Electric Latch Rune", level: 3, traits: ["electricity", "magical", "trap"], source: "Pathfinder GM Core", environments: ["urban", "underground"], hazardComplexity: .simple, summary: "An invisible rune discharges when a latch is grasped.")
-        let hazard = CatalogHazard(summary: hazardSummary, detection: "Stealth DC 20", disableMethods: ["Thievery DC 20", "Dispel Magic"], defenses: ["ac": 10], trigger: "A creature grasps the latch.", effect: "The rune deals electricity damage.", provenance: provenance("hazards", "electric-latch-rune"))
-        let quickID = "hazard/gm-core/quicksand/current"
-        let quickSummary = CatalogEntrySummary(contentID: quickID, kind: .hazard, name: "Quicksand", level: 3, traits: ["environmental"], source: "Pathfinder GM Core", environments: ["aquatic", "desert"], hazardComplexity: .complex, summary: "A patch of sand and water pulls creatures below the surface.")
-        let quick = CatalogHazard(summary: quickSummary, detection: "Stealth DC 22", disableMethods: ["Survival DC 18"], defenses: ["ac": 10], trigger: "A creature walks onto the patch.", effect: "The creature sinks.", routine: "Pull creatures down on its initiative.", reset: "The surface settles after 24 hours.", provenance: provenance("hazards", "quicksand"))
-        return SidekickCatalog(sourceRevision: sourceRevision, entries: [.creature(goblin), .creature(bog), .hazard(hazard), .hazard(quick)])
+        func creature(_ id: String, _ name: String, _ level: Int, traits: [String], environments: [String], roles: [EncounterRole], spellcasting: Bool, summary: String, provenance: CatalogProvenance) -> CatalogCreature {
+            let entry = CatalogEntrySummary(contentID: id, kind: .creature, name: name, level: level, traits: traits, source: provenance.sourceTitle, environments: environments, roles: roles, spellcasting: spellcasting, summary: summary)
+            return CatalogCreature(summary: entry, size: "med", spellcastingBlocks: spellcasting ? ["Spellcasting"] : [], tactics: "Use the creature's listed actions and terrain to pursue its role.", morale: "Withdraw or surrender when its stated motivation no longer holds.", provenance: provenance)
+        }
+        func hazard(_ id: String, _ name: String, _ level: Int, traits: [String], environments: [String], complexity: HazardComplexity, summary: String, supported: Bool = false, provenance: CatalogProvenance) -> CatalogHazard {
+            let entry = CatalogEntrySummary(contentID: id, kind: .hazard, name: name, level: level, traits: traits, source: provenance.sourceTitle, environments: environments, hazardComplexity: complexity, support: supported ? .supported : .unsupported, summary: summary)
+            return CatalogHazard(summary: entry, provenance: provenance)
+        }
+
+        let monsterPack = "packs/pathfinder-monster-core"
+        let monsterSource = "Pathfinder Monster Core"
+        let aapoph = creature("creature/monster-core/aapoph-granitescale/current", "Aapoph Granitescale", 6, traits: ["humanoid", "mutant", "serpentfolk"], environments: ["underground"], roles: [.skirmisher], spellcasting: false, summary: "The mutated aapophs dubbed granitescales have bulky frames covered in hard gray plates. These scales offer protection but shed when struck with too much force. Granitescales lik...", provenance: provenance(monsterSource, monsterPack, "MXSKccQqbQqQ77Ii", "2bf005ec5a8fd0bcd8b171dcf7b9a3b0bd0f54a1d1fdf1b73a204a418004d589"))
+        let flame = creature("creature/monster-core/flame-drake/current", "Flame Drake", 5, traits: ["dragon", "fire"], environments: ["aquatic", "desert", "forest", "underground", "urban"], roles: [.brute], spellcasting: false, summary: "Flame drakes dwell near volcanoes and magma, but it's not unheard of for one to drift into nearby areas like forests or wooded hills. Their scales are usually some shade of red,...", provenance: provenance(monsterSource, monsterPack, "qlxVPpwVFw5qIVQM", "ff80d9dfbd7c99bd65931244027f8398825011550902cc1ad3c419ac20e2c8dd"))
+        let pyro = creature("creature/monster-core/goblin-pyro/current", "Goblin Pyro", 1, traits: ["goblin", "humanoid"], environments: ["desert", "forest", "underground"], roles: [.controller], spellcasting: true, summary: "Some goblins take their people's admiration of fire fully into the realm of deadly obsession. These pyromaniacs can be a great boon to a band of goblin raiders eager to torch th...", provenance: provenance(monsterSource, monsterPack, "Ky5eNRvN71O0tY9l", "bdb745eb40cba6aae175a67cd2fc6b8481eaae82dd8407e8b5c8215872ddcaf4"))
+        let goblin = creature("creature/monster-core/goblin-warrior/current", "Goblin Warrior", -1, traits: ["goblin", "humanoid"], environments: ["desert", "forest"], roles: [.skirmisher], spellcasting: false, summary: "The frontline fighters of goblin tribes prefer to fight in large groups—especially when they can outnumber their foes at least three to one. These small humanoids typically have...", provenance: provenance(monsterSource, monsterPack, "fLLKuOXwPq1Iq0U4", "9f0204d98f439e13ff0ad4d031ed3808cd7740315a6cd6b2455ddf6600bc88db"))
+        let orc = creature("creature/monster-core/orc-veteran/current", "Orc Veteran", 1, traits: ["humanoid", "orc"], environments: ["desert", "underground"], roles: [.defender], spellcasting: false, summary: "Orc veterans have survived several bloody and chaotic conflicts, coming out the other side with scars and experience that make them even more dangerous opponents. Many orcs are...", provenance: provenance(monsterSource, monsterPack, "V90OYOMyyPLPJuod", "6e9f9cc200db1452f8bfc1bd8871421a9447589f4d075c524c146eb7fd77b4d3"))
+        let phantom = creature("creature/monster-core/phantom-knight/current", "Phantom Knight", 4, traits: ["ethereal", "incorporeal", "phantom", "spirit"], environments: ["underground"], roles: [.defender], spellcasting: false, summary: "Cavaliers and knights who died for their cause make for particularly strongwilled phantoms. Though their motives vary, these phantoms often seek to continue their lifelong missi...", provenance: provenance(monsterSource, monsterPack, "9VMoTqyVaKc4ZR4H", "fa60015e8435d1ac75d1ed7e2dd4b3cf8279b2d66ed3d9d145491417435e66ad"))
+        let pixie = creature("creature/monster-core/pixie/current", "Pixie", 4, traits: ["fey", "sprite"], environments: ["forest"], roles: [.controller], spellcasting: true, summary: "Insatiably curious, overly excitable, and just a bit puckish, pixies are wanderers and tricksters who use their pixie dust to create all sorts of whimsical situations, as well a...", provenance: provenance(monsterSource, monsterPack, "Ehtm5k9iBYTvSUcZ", "e43dd18cd559d89327d2178650846b78aa321a9fd6c1da288c80b586316553cd"))
+        let dwarf = creature("creature/npc-core/ancestry-npcs-dwarf-dwarf-smith/current", "Dwarf Smith", 0, traits: ["dwarf", "humanoid"], environments: ["underground", "urban"], roles: [.skirmisher], spellcasting: false, summary: "Many dwarves become smiths as their attention to detail, lifestyles that keep them close to useful materials such as iron, and a pride in their work all come together to become...", provenance: provenance("Pathfinder NPC Core", "packs/pathfinder-npc-core/ancestry-npcs/dwarf", "rY3uqGq5QyvNOU91", "36c0eb72daca5d3264fb2a2397dbddc46f505e0235b7f7da63cce1062fd1d7b7"))
+        let bottomlessPit = hazard("hazard/gm-core/bottomless-pit/current", "Bottomless Pit", 9, traits: ["magical", "mechanical", "trap"], environments: ["urban"], complexity: .simple, summary: "An iron trapdoor covers an infinitely deep 10-foot-square pit.", provenance: provenance("Pathfinder GM Core", "packs/hazards", "xkqjwu1ox0pQLOnb", "f80f44bece80f639e93fde9b2bef574da49abd3fd45bd10a4ee3a1a4a112c592", diagnostics: ["Nested item publication requires independent license review."]))
+        let electric = hazard("hazard/gm-core/electric-latch-rune/current", "Electric Latch Rune", 3, traits: ["electricity", "magical", "trap"], environments: ["underground", "urban"], complexity: .simple, summary: "An invisible rune imprinted on a door latch releases a powerful electric discharge.", provenance: provenance("Pathfinder GM Core", "packs/hazards", "491qhVbjsHnOuMZW", "d62280cc1300d9a6dc30f20af424348cc90f4ce7770e2591ca5e2ba53d543690", diagnostics: ["Nested item publication requires independent license review."]))
+        let quicksand = hazard("hazard/gm-core/quicksand/current", "Quicksand", 3, traits: ["environmental"], environments: ["aquatic", "desert"], complexity: .complex, summary: "A 15-foot-wide patch of water and sand attempts to submerge creatures that step onto it.", provenance: provenance("Pathfinder GM Core", "packs/hazards", "C6nFe8SCWJ8FmLOT", "ee56de4ac57cff87d62fe1f8a245fa2b16d472fdf4afcb15567b618f75c685d0", diagnostics: ["Nested item publication requires independent license review."]))
+        return SidekickCatalog(sourceRevision: sourceRevision, entries: [.creature(aapoph), .creature(flame), .creature(pyro), .creature(goblin), .creature(orc), .creature(phantom), .creature(pixie), .creature(dwarf), .hazard(bottomlessPit), .hazard(electric), .hazard(quicksand)])
     }
 }

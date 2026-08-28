@@ -1,7 +1,7 @@
 {
   "fixture_version": 1,
   "catalog_id": "sidekick-dm-p0",
-  "status": "audit-only",
+  "status": "generated",
   "coverage_claim": "levels, spellcasting presence, and hazard shapes only; no role/environment coverage claim",
   "policy": {
     "default_edition": "current-remaster",
@@ -67,7 +67,7 @@
     {"facet": "hazards", "status": "verified", "note": "GM Core hazards contain simple and complex records with trap, environmental, and haunt traits."},
     {"facet": "environment", "status": "blocked", "note": "P0 makes no environment-coverage claim. The design vocabulary is retained for future filters, but no assignments are published until each assignment has review evidence."},
     {"facet": "roles", "status": "blocked", "note": "P0 makes no Encounter Role coverage claim. The design vocabulary is retained, but supported_roles remains empty until each assignment has review evidence."},
-    {"facet": "completeness", "status": "generator-required", "note": "Counts prove source inventory only; normalized completeness still requires the Sidekick generator and diagnostics."}
+    {"facet": "completeness", "status": "verified", "note": "The generated fixture records normalized completeness, support, provenance, nested publication records, and diagnostics for every selected entry."}
   ],
   "representative_entries": [
     {"content_id": "creature/monster-core/goblin-warrior/current", "source_file": "packs/pathfinder-monster-core/goblin-warrior.json", "name": "Goblin Warrior", "level": -1, "source_sha256": "9f0204d98f439e13ff0ad4d031ed3808cd7740315a6cd6b2455ddf6600bc88db"},

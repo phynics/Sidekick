@@ -117,14 +117,21 @@ export function createEncounterPacketEditor({ root, packet = createEmptyPacket()
   const ownedBoundaries = structuredClone(boundaries);
   let currentRevision = revision;
   const constraintRevision = constraintsRevision;
+  let lastMutationOrigin = "gm";
   let history = [];
   let redoHistory = [];
 
-  const metadata = () => ({ revision: currentRevision, constraintsRevision: constraintRevision, readiness: validatePacket(current) });
+  const nativeOrigin = (origin) => ["gm", "agent", "webmcp", "reload"].includes(origin) ? origin : "gm";
+  const metadata = () => ({ revision: currentRevision, constraintsRevision: constraintRevision, origin: nativeOrigin(lastMutationOrigin), lastMutationOrigin: nativeOrigin(lastMutationOrigin), reviewState: "needed", readiness: validatePacket(current) });
+  const persistence = (origin = lastMutationOrigin) => {
+    const safeOrigin = nativeOrigin(origin);
+    lastMutationOrigin = safeOrigin;
+    return { format: "sidekickdm-encounter-packet", formatVersion: 1, packet: structuredClone(current), boundaries: structuredClone(ownedBoundaries), metadata: { revision: currentRevision, constraintsRevision: constraintRevision, origin: safeOrigin, lastMutationOrigin: safeOrigin, reviewState: "needed" } };
+  };
   const commandFor = (section) => ({ identity: "sidekickdm_set_encounter_identity", setup: "sidekickdm_set_setup", battlefield: "sidekickdm_set_battlefield_guidance", running_guidance: "sidekickdm_set_running_guidance", cohesion: "sidekickdm_set_cohesion", information: "sidekickdm_set_information_visibility", outcomes: "sidekickdm_set_outcomes", undo: "sidekickdm_undo", redo: "sidekickdm_redo" }[section] ?? "sidekickdm_set_encounter_packet");
   const emit = (section, value, origin, expectedRevision) => {
     onMutation({ command: commandFor(section), section, value, expected_encounter_revision: expectedRevision, expected_constraints_revision: constraintRevision, origin });
-    onAutosave({ format: "sidekickdm-encounter-packet", format_version: 1, packet: current, boundaries: ownedBoundaries, revision: currentRevision, constraints_revision: constraintRevision, origin });
+    onAutosave(persistence(origin));
   };
   const render = () => {
     const readiness = validatePacket(current);
@@ -156,7 +163,7 @@ export function createEncounterPacketEditor({ root, packet = createEmptyPacket()
     get metadata() { return metadata(); },
     render,
     setPacket(next, origin = "gm") { const beforeRevision = currentRevision; history.push(structuredClone(current)); current = structuredClone(next); redoHistory = []; currentRevision += 1; emit("packet", current, origin, beforeRevision); render(); },
-    autosave() { return { format: "sidekickdm-encounter-packet", format_version: 1, packet: structuredClone(current), boundaries: structuredClone(ownedBoundaries), revision: currentRevision, constraints_revision: constraintRevision }; },
+    autosave() { return persistence(); },
     destroy() { root.replaceChildren(); }
   };
 }

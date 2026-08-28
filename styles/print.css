@@ -1,7 +1,7 @@
 /* Keep this file in sync with PRINT_CSS in src/print-packet.js. The browser
  * host may load it for the normal app, while standalone projections inline the
  * same rules to remain usable from a locally restored encounter. */
-@page { margin: 14mm 13mm; size: auto; }
+@page { margin: 14mm 13mm; size: auto; @top-center { content: element(sidekick-print-header); } }
 * { box-sizing: border-box; }
 .print-packet { color: #17202a; background: #fff; font: 11pt/1.45 Georgia, "Times New Roman", serif; max-width: 210mm; margin: 0 auto; }
 .print-packet h1, .print-packet h2, .print-packet h3, .print-packet h4 { font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.15; }
@@ -10,6 +10,7 @@
 .print-packet h3 { font-size: 13pt; margin: 1em 0 .35em; }
 .print-packet h4 { font-size: 10pt; margin: .65em 0 .15em; text-transform: uppercase; letter-spacing: .04em; }
 .print-cover { border-bottom: 2px solid #17202a; padding-bottom: 9mm; }
+.print-running-header { display: none; }
 .print-meta, .print-empty { color: #52606d; font-size: 9pt; }
 .print-field p { margin: .15em 0 .5em; white-space: pre-wrap; }
 .print-list { margin: .15em 0 .6em; padding-left: 1.3em; }
@@ -29,6 +30,7 @@
 .print-footer { border-top: 1px solid #bbc2c8; margin-top: 8mm; padding-top: 3mm; color: #52606d; font-size: 8pt; }
 @media screen { .print-packet { padding: 12mm; } .print-packet .print-section { margin-bottom: 12mm; } }
 @media print {
+  .print-running-header { display: flex; justify-content: space-between; gap: 8mm; position: running(sidekick-print-header); border-bottom: 1px solid #bbc2c8; padding-bottom: 2mm; color: #52606d; font: 8pt/1.2 Inter, system-ui, sans-serif; }
   .print-packet { max-width: none; }
   .print-packet a { color: inherit; text-decoration: none; }
   .print-packet .controls, .print-packet button, .print-packet input, .print-packet select, .print-packet textarea, .print-packet form, .print-packet summary, .print-packet details, .print-packet [data-editing-control], .print-packet [data-action] { display: none !important; }

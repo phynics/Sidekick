@@ -1,6 +1,6 @@
 # PF2 catalog source audit
 
-Status: audit-only, captured 2026-08-28. This document records what the local canonical data proves and what a future `GenerateSidekickDMCatalog` pass must still verify. Sidekick must ship normalized, static data; Foundry is an extraction source, not a runtime dependency.
+Status: generated and verified, captured 2026-08-28. This document records what the local canonical data proves and how `GenerateSidekickDMCatalog` closes the remaining rights and provenance gaps. Sidekick ships normalized, static data; Foundry is an extraction source, not a runtime dependency.
 
 ## Canonical inputs
 
@@ -25,7 +25,7 @@ Foundry `_id` values and pack paths are technical provenance, not public identit
 
 ## Completeness and normalization
 
-An entry is `complete` only when its name, level, publication/license basis, kind, and user-facing rules text are present. Missing optional fields produce diagnostics; missing required fields produce `unsupported` with a reason. Preserve source publication and page when known, and retain `source_sha256`, source revision, generator revision, and diagnostics in the manifest.
+An entry is `complete` only when its name, level, publication/license basis, kind, and user-facing rules text are present. Missing optional fields produce diagnostics; missing required fields produce `unsupported` with a reason. Preserve source publication and page when known, and retain `source_file`, `source_sha256`, source revision, generator revision, publication attribution, extraction attribution, asset boundary, nested publication records, and diagnostics in the manifest. A missing or mismatched nested publication/license record marks the entry `unsupported`; the entry remains available for inspection but cannot be added to a ready Encounter.
 
 Imported Foundry HTML must never be rendered or copied verbatim. The normalizer should convert paragraphs, lists, emphasis, tables, and references to a plain/allowlisted representation. Review or reject `@Check`, `@UUID`, `@Damage`, `@Template`, action-glyph enrichers, embedded documents, scripts, event attributes, inline styles, remote URLs, and macro/rule-element automation. Images, portraits, tokens, maps, and Foundry configuration are out of P0 scope.
 
@@ -39,7 +39,7 @@ Known gaps are intentional: local JSON does not carry reliable page numbers, rol
 
 ## Reproducibility
 
-The future generator must follow the deterministic pattern already used by Foretell: typed input/output, sorted-key JSON, stable ordering, explicit source revision, and byte-for-byte verification against checked-in fixtures. It should produce the catalog, manifest, and notice file together. The current Sidekick checkout has no executable catalog scaffold, so this audit does not add one or edit shared build files.
+The generator follows the deterministic pattern already used by Foretell: typed input/output, sorted-key JSON, stable ordering, explicit source revision, and byte-for-byte verification against checked-in fixtures. It produces the catalog, manifest, and notice file together. `NOTICE.txt` uses UTF-8, LF line endings, and one trailing newline. The verifier compares all three generated artifacts byte for byte.
 
 Useful read-only checks from the repository root:
 

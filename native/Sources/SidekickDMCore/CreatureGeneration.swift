@@ -11,7 +11,7 @@ public enum CreatureGenerationError: Error, Equatable, Sendable {
         switch self {
         case .unsupportedCatalogEntry: return "unsupported_catalog_entry"
         case .catalogEntryPartial: return "catalog_entry_partial"
-        case .structural: return "creature_structural_errors"
+        case .structural: return "invalid_creature_stat_block"
         }
     }
 

@@ -26,6 +26,14 @@ const PUBLICATION_ATTRIBUTIONS = Object.freeze([
   "Pathfinder GM Core"
 ]);
 
+// Use code-point order for persisted projections. `localeCompare` varies with
+// the host locale and can change packet output between machines.
+function fixedOrder(left, right) {
+  const a = String(left ?? "");
+  const b = String(right ?? "");
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 const hasText = (value) => typeof value === "string" && value.trim().length > 0;
 const valueOr = (value, fallback = "Not recorded") => hasText(String(value ?? "")) ? String(value).trim() : fallback;
 const clone = (value) => value == null ? value : structuredClone(value);
@@ -86,6 +94,7 @@ function packetFrom(encounter) {
 function sourceProvenance(entry) {
   const provenance = key(entry, "provenance", "catalogProvenance", "catalog_provenance") ?? {};
   const upstream = key(provenance, "upstream") ?? {};
+  const licenseBasis = key(provenance, "license_basis", "licenseBasis");
   return {
     contentID: valueOr(key(entry, "content_id", "contentID", "id"), "Not recorded"),
     sourceTitle: valueOr(key(provenance, "source_title", "sourceTitle") ?? key(entry, "source"), "Not recorded"),
@@ -95,11 +104,14 @@ function sourceProvenance(entry) {
     upstreamPack: valueOr(key(upstream, "pack") ?? key(provenance, "upstreamPack"), "Not recorded"),
     upstreamIdentifier: valueOr(key(upstream, "identifier") ?? key(provenance, "upstreamIdentifier"), "Not recorded"),
     sourceSHA256: valueOr(key(provenance, "source_sha256", "sourceSHA256"), "Not recorded"),
-    licenseBasis: valueOr(key(provenance, "license_basis", "licenseBasis"), "Not recorded"),
+    licenseBasis: valueOr(licenseBasis, "Not recorded"),
+    licenseResolved: hasText(String(licenseBasis ?? "")) && !["unknown", "unresolved", "not recorded", "none"].includes(normalizedLicense(licenseBasis)),
     notices: listValues(key(provenance, "notices")),
     diagnostics: listValues(key(provenance, "diagnostics"))
   };
 }
+
+function normalizedLicense(value) { return String(value ?? "").trim().toLowerCase(); }
 
 function publicationTitle(title) {
   const value = String(title ?? "").trim();
@@ -197,7 +209,7 @@ function normalizeParticipant(group, { catalog, embedded, index }) {
       speeds: object(key(embeddedCreature, "speeds") ?? key(detail, "speeds")),
       strikes: normalizedArray(key(embeddedCreature, "strikes") ?? key(detail, "strikes")),
       abilities: normalizedArray(key(embeddedCreature, "abilities") ?? key(detail, "abilities")),
-      spellcasting: key(embeddedCreature, "spellcasting") ?? key(detail, "spellcasting_blocks", "spellcastingBlocks") ?? [],
+      spellcasting: normalizedArray(key(embeddedCreature, "spellcasting_blocks", "spellcastingBlocks") ?? key(detail, "spellcasting_blocks", "spellcastingBlocks") ?? key(entry?.detail, "spellcasting_blocks", "spellcastingBlocks")),
       provenance
     },
     provenance,
@@ -278,17 +290,25 @@ function buildNotices(input, encounter, components, manifest) {
     const fingerprint = JSON.stringify([provenance.contentID, provenance.sourceTitle, provenance.sourcePage, provenance.sourceSHA256]);
     if (!provenanceMap.has(fingerprint)) provenanceMap.set(fingerprint, provenance);
   }
-  const catalogProvenance = [...provenanceMap.values()].sort((a, b) => `${a.sourceTitle}|${a.contentID}`.localeCompare(`${b.sourceTitle}|${b.contentID}`));
-  const sourceRevision = key(manifest, "source")?.revision ?? key(input, "sourceRevision", "source_revision") ?? "Not recorded";
-  const sourceSystem = key(manifest, "source")?.system ?? "foundryvtt-pf2e";
+  const catalogProvenance = [...provenanceMap.values()].sort((a, b) => fixedOrder(`${a.sourceTitle}|${a.contentID}`, `${b.sourceTitle}|${b.contentID}`));
+  const sourceRevision = key(manifest, "source")?.revision ?? key(manifest, "source_revision") ?? key(input, "sourceRevision", "source_revision") ?? "Not recorded";
+  const sourceSystem = key(manifest, "source")?.system ?? key(manifest, "source_system") ?? "foundryvtt-pf2e";
   const embeddedNoticeTexts = uniqueStrings(catalogProvenance.map((item) => item.notices));
   const publicationTitles = [...new Set(catalogProvenance.map((item) => publicationTitle(item.sourceTitle)).filter((title) => title !== "Not recorded"))];
   const attributions = [...PUBLICATION_ATTRIBUTIONS.filter((title) => publicationTitles.includes(title)), ...publicationTitles.filter((title) => !PUBLICATION_ATTRIBUTIONS.includes(title))];
+  const diagnostics = uniqueStrings(catalogProvenance.map((item) => item.diagnostics));
+  const unresolvedLicenses = catalogProvenance.filter((item) => !item.licenseResolved).map((item) => `License basis is unresolved for ${item.contentID}.`);
+  const catalogID = key(manifest, "catalog_id", "catalogID") ?? key(input, "catalogID", "catalog_id") ?? "Not recorded";
+  const generatedAt = key(manifest, "generated_at", "generatedAt") ?? "Not recorded";
+  const generator = key(manifest, "generator") ?? {};
+  const counts = key(manifest, "counts") ?? {};
   return {
     general: [UNOFFICIAL_NOTICE, ORC_NOTICE, EXTRACTION_NOTICE, NO_ASSET_RIGHTS_NOTICE],
     publicationAttributions: attributions,
     explicit: [...explicit, ...embeddedNoticeTexts],
-    source: { system: sourceSystem, revision: sourceRevision },
+    diagnostics,
+    unresolvedLicenses,
+    source: { catalogID, system: sourceSystem, revision: sourceRevision, generatedAt, generatorName: key(generator, "name"), generatorVersion: key(generator, "version"), counts },
     catalogProvenance,
     generatedProvenance: {
       origin: valueOr(key(encounter, "provenance")?.origin, "Not recorded"),
@@ -305,7 +325,7 @@ export function createEncounterPrintProjection(input = {}) {
   const embedded = embeddedComponents(encounter, input.embeddedComponents ?? input.embedded_components);
   const participants = array(key(encounter, "participantGroups", "participant_groups")).map((group, index) => normalizeParticipant(group, { catalog, embedded, index }));
   const hazards = array(key(encounter, "hazards")).map((hazard, index) => normalizeHazard(hazard, { catalog, embedded, index }));
-  const phases = array(key(encounter, "structuredPhases", "structured_phases", "phases")).map((phase, index) => normalizePhase(phase, { participantGroups: participants, hazards, index })).sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+  const phases = array(key(encounter, "structuredPhases", "structured_phases", "phases")).map((phase, index) => normalizePhase(phase, { participantGroups: participants, hazards, index })).sort((a, b) => a.order - b.order || fixedOrder(a.id, b.id));
   const components = { participants, hazards, npcProfiles: embedded.npcProfiles.map((profile, index) => ({ id: valueOr(key(profile, "id", "profileID"), `npc_${index + 1}`), name: valueOr(key(profile, "name") ?? key(profile?.profile, "name"), "Unnamed NPC Profile"), tier: valueOr(key(profile, "tier", "narrativeTier") ?? key(profile?.profile, "tier", "narrativeTier"), "Not recorded"), profile: clone(profile) })) };
   const manifest = input.manifest ?? input.catalogManifest ?? input.catalog_manifest;
   return {
@@ -353,7 +373,7 @@ function renderField(label, value) { return `<div class="print-field"><h4>${esca
 function renderSection(id, title, body) { return `<section class="print-section print-${id.replaceAll("_", "-")}" data-print-section="${id}"><h2>${escapeHTML(title)}</h2>${body}</section>`; }
 
 function renderComponentMechanics(components) {
-  const creatures = components.participants.map((component) => `<article class="print-stat-block" data-component-kind="creature"><h3>${renderValue(component.quantity)} × ${renderValue(component.name)}</h3><p class="print-meta">Level ${renderValue(component.level)} · ${renderValue(component.adjustment)} · ${renderValue(component.encounterRole)} · ${renderValue(component.participation?.mode)}</p>${renderField("Starting area", component.startingArea)}${renderField("Tactics", component.tactics)}${renderField("Morale", component.morale)}${renderField("Mechanics", component.mechanics.concept)}${renderPairs({ perception: component.mechanics.perception, senses: component.mechanics.senses, languages: component.mechanics.languages, skills: component.mechanics.skills, defenses: component.mechanics.defenses, speeds: component.mechanics.speeds })}${component.mechanics.strikes.length ? renderField("Strikes", component.mechanics.strikes) : ""}${component.mechanics.abilities.length ? renderField("Abilities", component.mechanics.abilities) : ""}${renderField("Catalog Provenance", component.provenance)}</article>`).join("");
+  const creatures = components.participants.map((component) => `<article class="print-stat-block" data-component-kind="creature"><h3>${renderValue(component.quantity)} × ${renderValue(component.name)}</h3><p class="print-meta">Level ${renderValue(component.level)} · ${renderValue(component.adjustment)} · ${renderValue(component.encounterRole)} · ${renderValue(component.participation?.mode)}</p>${renderField("Starting area", component.startingArea)}${renderField("Tactics", component.tactics)}${renderField("Morale", component.morale)}${renderField("Mechanics", component.mechanics.concept)}${renderPairs({ perception: component.mechanics.perception, senses: component.mechanics.senses, languages: component.mechanics.languages, skills: component.mechanics.skills, defenses: component.mechanics.defenses, speeds: component.mechanics.speeds })}${component.mechanics.strikes.length ? renderField("Strikes", component.mechanics.strikes) : ""}${component.mechanics.abilities.length ? renderField("Abilities", component.mechanics.abilities) : ""}${component.mechanics.spellcasting.length ? renderField("Spellcasting", component.mechanics.spellcasting) : ""}${renderField("Catalog Provenance", component.provenance)}</article>`).join("");
   const hazards = components.hazards.map((component) => `<article class="print-stat-block" data-component-kind="hazard"><h3>${renderValue(component.name)}</h3><p class="print-meta">Level ${renderValue(component.level)} · ${renderValue(component.complexity)} · ${renderValue(component.participation?.mode)} · placed ${renderValue(component.placement)}</p>${renderField("Description", component.mechanics.description)}${renderField("Detection", component.mechanics.detection)}${renderField("Disable methods", component.mechanics.disableMethods)}${renderField("Defenses", component.mechanics.defenses)}${renderField("Trigger", component.mechanics.trigger)}${renderField("Effect", component.mechanics.effect)}${renderField("Routine", component.mechanics.routine)}${renderField("Reset", component.mechanics.reset)}${renderField("Catalog Provenance", component.provenance)}</article>`).join("");
   const npcs = components.npcProfiles.map((profile) => `<article class="print-stat-block" data-component-kind="npc-profile"><h3>${renderValue(profile.name)}</h3><p class="print-meta">NPC Profile · ${renderValue(profile.tier)}</p>${renderPairs(profile.profile)}</article>`).join("");
   return `${creatures}${npcs}${hazards}` || `<p class="print-empty">No embedded component mechanics recorded.</p>`;
@@ -373,7 +393,7 @@ export function renderEncounterPrintProjection(projectionOrInput = {}, options =
   const budget = summary.budget ? renderPairs(summary.budget) : `<p class="print-empty">Budget was not included in this restored snapshot.</p>`;
   const readiness = summary.readiness ? `<div class="print-readiness"><p><strong>Status:</strong> ${renderValue(summary.readiness.status)}</p>${renderField("Structural errors", summary.readiness.structuralErrors)}${renderField("Design warnings", summary.readiness.designWarnings)}</div>` : "";
   const notice = projection.notices;
-  const provenanceRows = notice.catalogProvenance.map((item) => `<tr><th scope="row">${renderValue(item.contentID)}</th><td>${renderValue(item.sourceTitle)}</td><td>${renderValue(item.sourcePage)}</td><td>${renderValue(item.edition)}</td><td>${renderValue(item.licenseBasis)}</td><td>${renderValue(item.sourceSHA256)}</td><td>${renderList(item.notices)}</td></tr>`).join("");
+  const provenanceRows = notice.catalogProvenance.map((item) => `<tr><th scope="row">${renderValue(item.contentID)}</th><td>${renderValue(item.sourceTitle)}</td><td>${renderValue(item.sourcePage)}</td><td>${renderValue(item.edition)}</td><td>${renderValue(item.licenseBasis)}</td><td>${renderValue(item.sourceSHA256)}</td><td>${renderList(item.notices)}</td><td>${renderList(item.diagnostics)}</td></tr>`).join("");
   const alternative = array(projection.outcomes.alternativeResolutions).map((item) => `<article class="print-stat-block"><h3>${renderValue(key(item, "title"))}</h3>${renderPairs(item)}</article>`).join("");
   const summaryBody = [
     renderField("Premise", identity.premise), renderField("Objective", identity.objective), renderField("Stakes", identity.stakes),
@@ -399,8 +419,10 @@ export function renderEncounterPrintProjection(projectionOrInput = {}, options =
     notice.publicationAttributions.length ? `<h3>Included publication attributions</h3>${renderList(notice.publicationAttributions)}` : "",
     notice.explicit.length ? `<h3>Embedded-content notices</h3>${renderList(notice.explicit)}` : "",
     `<h3>Catalog extraction source</h3>${renderPairs(notice.source)}`,
+    notice.diagnostics.length ? `<h3>Catalog diagnostics</h3>${renderList(notice.diagnostics)}` : "",
+    notice.unresolvedLicenses.length ? `<h3>Unresolved license warnings</h3>${renderList(notice.unresolvedLicenses)}` : "",
     `<h3>Generated provenance</h3>${renderPairs(notice.generatedProvenance)}`,
-    `<h3>Catalog Provenance</h3>${provenanceRows ? `<div class="print-table-wrap"><table><thead><tr><th scope="col">Content ID</th><th scope="col">Source</th><th scope="col">Page</th><th scope="col">Edition</th><th scope="col">License</th><th scope="col">SHA-256</th><th scope="col">Entry notices</th></tr></thead><tbody>${provenanceRows}</tbody></table></div>` : `<p class="print-empty">No embedded catalog provenance recorded.</p>`}`
+    `<h3>Catalog Provenance</h3>${provenanceRows ? `<div class="print-table-wrap"><table><thead><tr><th scope="col">Content ID</th><th scope="col">Source</th><th scope="col">Page</th><th scope="col">Edition</th><th scope="col">License</th><th scope="col">SHA-256</th><th scope="col">Entry notices</th><th scope="col">Diagnostics</th></tr></thead><tbody>${provenanceRows}</tbody></table></div>` : `<p class="print-empty">No embedded catalog provenance recorded.</p>`}`
   ].join("");
   const sections = [
     renderSection("summary", "Summary", summaryBody),
@@ -410,7 +432,7 @@ export function renderEncounterPrintProjection(projectionOrInput = {}, options =
     renderSection("outcomes", "Outcomes", outcomeBody),
     renderSection("notices", "Notices and provenance", noticeBody)
   ].join("");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHTML(projection.title)} · Sidekick DM</title>${css}</head><body><main class="print-packet" data-print-packet="${PRINT_PACKET_VERSION}"><header class="print-cover"><p class="eyebrow">Sidekick DM · Runnable Encounter Packet</p><h1>${renderValue(projection.title)}</h1><p class="print-meta">Offline print projection · content and notices restored from local data</p></header>${sections}<footer class="print-footer"><p>Sidekick DM · Encounter Packet v${PRINT_PACKET_VERSION}</p></footer></main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHTML(projection.title)} · Sidekick DM</title>${css}</head><body><main class="print-packet" data-print-packet="${PRINT_PACKET_VERSION}"><header class="print-running-header" aria-hidden="true"><span>Sidekick DM · Runnable Encounter Packet</span><span>${renderValue(projection.title)}</span></header><header class="print-cover"><p class="eyebrow">Sidekick DM · Runnable Encounter Packet</p><h1>${renderValue(projection.title)}</h1><p class="print-meta">Offline print projection · content and notices restored from local data</p></header>${sections}<footer class="print-footer"><p>Sidekick DM · Encounter Packet v${PRINT_PACKET_VERSION}</p></footer></main></body></html>`;
 }
 
 /** Mount a print projection into a document without fetching a restored file. */
@@ -425,7 +447,8 @@ export function mountEncounterPrintProjection({ root, input = {}, options = {} }
 
 // Exported so the application host can mount this stylesheet without a
 // network request when it opens a print-only view.
-export const PRINT_CSS = `@page{margin:14mm 13mm;size:auto}*{box-sizing:border-box}.print-packet{color:#17202a;background:#fff;font:11pt/1.45 Georgia,"Times New Roman",serif;max-width:210mm;margin:0 auto}.print-packet h1,.print-packet h2,.print-packet h3,.print-packet h4{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.15}.print-packet h1{font-size:26pt;margin:.2em 0 .35em}.print-packet h2{font-size:17pt;border-bottom:1px solid #8a9299;padding-bottom:.18em;margin:1.2em 0 .6em}.print-packet h3{font-size:13pt;margin:1em 0 .35em}.print-packet h4{font-size:10pt;margin:.65em 0 .15em;text-transform:uppercase;letter-spacing:.04em}.print-cover{border-bottom:2px solid #17202a;padding-bottom:9mm}.print-meta,.print-empty{color:#52606d;font-size:9pt}.print-field p{margin:.15em 0 .5em;white-space:pre-wrap}.print-list{margin:.15em 0 .6em;padding-left:1.3em}.print-field,.print-subsection,.print-phase,.print-stat-block,.print-readiness{break-inside:avoid;page-break-inside:avoid}.print-phase,.print-stat-block,.print-subsection{border:1px solid #bbc2c8;border-radius:3px;padding:4mm;margin:0 0 4mm}.print-stat-block{border-left:4px solid #34495e}.print-facts{margin:.2em 0 .6em}.print-facts>div{display:grid;grid-template-columns:minmax(30mm,42mm) 1fr;gap:2mm;border-bottom:1px solid #e1e5e8;padding:1.2mm 0}.print-facts dt{font-weight:700}.print-facts dd{margin:0;white-space:pre-wrap}.print-facts .print-list{margin:0}.print-table-wrap{overflow:visible}.print-packet table{border-collapse:collapse;width:100%;font-size:8pt;table-layout:fixed;word-break:break-word}.print-packet th,.print-packet td{border:1px solid #aeb7bf;padding:1.5mm;vertical-align:top;text-align:left}.print-packet thead{display:table-header-group}.print-packet tr{break-inside:avoid;page-break-inside:avoid}.print-footer{border-top:1px solid #bbc2c8;margin-top:8mm;padding-top:3mm;color:#52606d;font-size:8pt}@media screen{.print-packet{padding:12mm}.print-packet .print-section{margin-bottom:12mm}}@media print{.print-packet{max-width:none}.print-packet a{color:inherit;text-decoration:none}.print-packet .controls,.print-packet button,.print-packet input,.print-packet select,.print-packet textarea,.print-packet form,.print-packet summary,.print-packet details,.print-packet [data-editing-control],.print-packet [data-action]{display:none!important}.print-packet h1,.print-packet h2,.print-packet h3{break-after:avoid;page-break-after:avoid}.print-section{break-before:auto;page-break-before:auto}.print-section:first-of-type{break-before:avoid;page-break-before:avoid}.print-notices{break-before:page;page-break-before:always}.print-notice-copy{break-inside:avoid;page-break-inside:avoid}}`;
+const PRINT_CSS_BASE = `@page{margin:14mm 13mm;size:auto}*{box-sizing:border-box}.print-packet{color:#17202a;background:#fff;font:11pt/1.45 Georgia,"Times New Roman",serif;max-width:210mm;margin:0 auto}.print-packet h1,.print-packet h2,.print-packet h3,.print-packet h4{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.15}.print-packet h1{font-size:26pt;margin:.2em 0 .35em}.print-packet h2{font-size:17pt;border-bottom:1px solid #8a9299;padding-bottom:.18em;margin:1.2em 0 .6em}.print-packet h3{font-size:13pt;margin:1em 0 .35em}.print-packet h4{font-size:10pt;margin:.65em 0 .15em;text-transform:uppercase;letter-spacing:.04em}.print-cover{border-bottom:2px solid #17202a;padding-bottom:9mm}.print-running-header{display:none}.print-meta,.print-empty{color:#52606d;font-size:9pt}.print-field p{margin:.15em 0 .5em;white-space:pre-wrap}.print-list{margin:.15em 0 .6em;padding-left:1.3em}.print-field,.print-subsection,.print-phase,.print-stat-block,.print-readiness{break-inside:avoid;page-break-inside:avoid}.print-phase,.print-stat-block,.print-subsection{border:1px solid #bbc2c8;border-radius:3px;padding:4mm;margin:0 0 4mm}.print-stat-block{border-left:4px solid #34495e}.print-facts{margin:.2em 0 .6em}.print-facts>div{display:grid;grid-template-columns:minmax(30mm,42mm) 1fr;gap:2mm;border-bottom:1px solid #e1e5e8;padding:1.2mm 0}.print-facts dt{font-weight:700}.print-facts dd{margin:0;white-space:pre-wrap}.print-facts .print-list{margin:0}.print-table-wrap{overflow:visible}.print-packet table{border-collapse:collapse;width:100%;font-size:8pt;table-layout:fixed;word-break:break-word}.print-packet th,.print-packet td{border:1px solid #aeb7bf;padding:1.5mm;vertical-align:top;text-align:left}.print-packet thead{display:table-header-group}.print-packet tr{break-inside:avoid;page-break-inside:avoid}.print-footer{border-top:1px solid #bbc2c8;margin-top:8mm;padding-top:3mm;color:#52606d;font-size:8pt}@media screen{.print-packet{padding:12mm}.print-packet .print-section{margin-bottom:12mm}}@media print{.print-running-header{display:flex;justify-content:space-between;gap:8mm;position:running(sidekick-print-header);border-bottom:1px solid #bbc2c8;padding-bottom:2mm;color:#52606d;font:8pt/1.2 Inter,system-ui,sans-serif}.print-packet{max-width:none}.print-packet a{color:inherit;text-decoration:none}.print-packet .controls,.print-packet button,.print-packet input,.print-packet select,.print-packet textarea,.print-packet form,.print-packet summary,.print-packet details,.print-packet [data-editing-control],.print-packet [data-action]{display:none!important}.print-packet h1,.print-packet h2,.print-packet h3{break-after:avoid;page-break-after:avoid}.print-section{break-before:auto;page-break-before:auto}.print-section:first-of-type{break-before:avoid;page-break-before:avoid}.print-notices{break-before:page;page-break-before:always}.print-notice-copy{break-inside:avoid;page-break-inside:avoid}}`;
+export const PRINT_CSS = `${PRINT_CSS_BASE.replace("@page{margin:14mm 13mm;size:auto}", "@page{margin:14mm 13mm;size:auto}@page{@top-center{content:element(sidekick-print-header)}}")}`;
 
 export const buildPrintPacket = createEncounterPrintProjection;
 export const renderPrintPacket = renderEncounterPrintProjection;

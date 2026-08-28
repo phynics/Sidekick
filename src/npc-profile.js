@@ -29,6 +29,50 @@ const text = (value) => typeof value === "string" && value.trim().length > 0;
 const clone = (value) => structuredClone(value);
 const issue = (code, field, message) => ({ code, field, message });
 
+const NATIVE_PROFILE_KEYS = Object.freeze({
+  objectVersion: "object_version",
+  participantGroupID: "participant_group_id",
+  encounterPurpose: "encounter_purpose",
+  appearanceHook: "appearance_hook",
+  voiceManner: "voice_manner",
+  immediateGoal: "immediate_goal",
+  deeperMotivation: "deeper_motivation",
+  combatObjective: "combat_objective",
+  moraleExit: "morale_exit",
+  peacefulResponse: "peaceful_response",
+  futureConsequence: "future_consequence"
+});
+
+/** Convert the browser profile spelling to NPCProfile's explicit Swift keys. */
+export function toNativeNPCProfile(profile = createEmptyNPCProfile()) {
+  const value = clone(profile);
+  for (const [camel, snake] of Object.entries(NATIVE_PROFILE_KEYS)) {
+    if (value[camel] !== undefined) {
+      value[snake] = value[camel];
+      delete value[camel];
+    }
+  }
+  return value;
+}
+
+/** Convert an NPCProfile decoded by Swift back to the browser spelling. */
+export function fromNativeNPCProfile(profile = {}) {
+  const value = clone(profile);
+  for (const [camel, snake] of Object.entries(NATIVE_PROFILE_KEYS)) {
+    if (value[snake] !== undefined) {
+      value[camel] = value[snake];
+      delete value[snake];
+    }
+  }
+  return value;
+}
+
+function toNativeNPCSnapshot(snapshot) {
+  const value = clone(snapshot);
+  if (value.profile) value.profile = toNativeNPCProfile(value.profile);
+  return value;
+}
+
 export function requiredNPCProfileFields(tier = "incidental") {
   void tier;
   return [...BASE_FIELDS];
@@ -126,9 +170,20 @@ export function createNPCProfileEditor({ root, profile = createEmptyNPCProfile()
   if (!current.narrativeTier) current.narrativeTier = current.tier ?? "incidental";
   if (participantGroupID) current.participantGroupID = participantGroupID;
 
+  const persistence = (origin = undefined) => ({
+    format: "sidekickdm-npc-profile",
+    formatVersion: 1,
+    profile: toNativeNPCProfile(current),
+    participantGroupID: current.participantGroupID,
+    snapshot: toNativeNPCSnapshot(createNPCProfileSnapshot(current)),
+    history: history.map(toNativeNPCProfile),
+    redoHistory: redoHistory.map(toNativeNPCProfile),
+    ...(origin === undefined ? {} : { origin })
+  });
+
   const emit = (command, origin, expectedRevision) => {
     onMutation({ command: "sidekickdm_upsert_npc_profile", profile: clone(current), participant_group_id: current.participantGroupID, tier: current.tier ?? current.narrativeTier, expected_npc_revision: expectedRevision, origin });
-    onAutosave({ format: "sidekickdm-npc-profile", format_version: 1, profile: clone(current), participant_group_id: current.participantGroupID, snapshot: createNPCProfileSnapshot(current), revision: currentRevision, origin });
+    onAutosave(persistence(origin));
   };
   const render = () => {
     const result = validateNPCProfile(current);
@@ -152,7 +207,7 @@ export function createNPCProfileEditor({ root, profile = createEmptyNPCProfile()
     setProfile(next, origin = "gm") { mutate((value) => Object.assign(value, clone(next)), origin); },
     attachToParticipant(id, origin = "gm") { mutate((value) => { if (!text(id)) throw new Error("NPC Profile links require a participant group ID."); value.participantGroupID = id; }, origin); },
     snapshot(capturedAt = "") { return createNPCProfileSnapshot(current, capturedAt); },
-    autosave() { return { format: "sidekickdm-npc-profile", format_version: 1, profile: clone(current), participant_group_id: current.participantGroupID, snapshot: createNPCProfileSnapshot(current), revision: currentRevision }; },
+    autosave() { return persistence(); },
     undo() { if (history.length) { const expected = currentRevision; redoHistory.push(clone(current)); current = history.pop(); currentRevision += 1; current.revision = currentRevision; emit("sidekickdm_undo", "gm", expected); render(); } },
     redo() { if (redoHistory.length) { const expected = currentRevision; history.push(clone(current)); current = redoHistory.pop(); currentRevision += 1; current.revision = currentRevision; emit("sidekickdm_redo", "gm", expected); render(); } },
     destroy() { root.replaceChildren(); }

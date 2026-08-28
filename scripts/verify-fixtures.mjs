@@ -19,12 +19,14 @@ const rulesPath = resolve(root, "docs/compatibility/pf2-rules-golden.v1.json");
 const demoPath = resolve(root, "public/data/demo-encounter.v1.json");
 const noticePath = resolve(root, "public/data/NOTICE.txt");
 const releaseNoticePath = resolve(root, "docs/compatibility/release-notices.md");
+const catalogAuditManifestPath = resolve(root, "docs/compatibility/catalog-manifest.v1.json");
 
-const [rulesRaw, demoRaw, notice, releaseNotice] = await Promise.all([
+const [rulesRaw, demoRaw, notice, releaseNotice, catalogAuditManifestRaw] = await Promise.all([
   readFile(rulesPath, "utf8"),
   readFile(demoPath, "utf8"),
   readFile(noticePath, "utf8"),
-  readFile(releaseNoticePath, "utf8")
+  readFile(releaseNoticePath, "utf8"),
+  readFile(catalogAuditManifestPath, "utf8")
 ]);
 
 const rules = object(JSON.parse(rulesRaw), "rules fixture");
@@ -76,5 +78,13 @@ for (const [label, text] of [["catalog notice", notice], ["release notice", rele
 }
 assert.match(notice, /ORC/i);
 assert.match(releaseNotice, /Foundry/i);
+const catalogAuditManifest = object(JSON.parse(catalogAuditManifestRaw), "catalog audit manifest");
+assert.equal(catalogAuditManifest.manifest_version, 1);
+assert.equal(catalogAuditManifest.status, "generated");
+assert.equal(catalogAuditManifest.source?.system, "foundryvtt-pf2e");
+assert.ok(catalogAuditManifest.source?.repository && catalogAuditManifest.source?.revision && catalogAuditManifest.generator_revision);
+assert.deepEqual(catalogAuditManifest.publication_attributions, ["Pathfinder GM Core", "Pathfinder Monster Core", "Pathfinder NPC Core"]);
+assert.ok(catalogAuditManifest.asset_boundary?.excluded?.includes("rule-element automation"));
+assert.equal(catalogAuditManifest.nested_license_policy?.action, "unsupported");
 
 console.log("Fixture and source-notice verification passed: PF2 rules vectors, deterministic demo asset, and checked-in rights boundaries.");

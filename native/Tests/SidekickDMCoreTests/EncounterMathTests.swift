@@ -86,6 +86,80 @@ final class EncounterMathTests: XCTestCase {
         XCTAssertEqual(store.budget.baseXPAward, 135)
     }
 
+    func testIntegerCommandInputsRejectFractionalAndNonFiniteValuesAtomically() throws {
+        let store = EncounterStore()
+        let beforeCreate = store.draft
+        XCTAssertThrowsError(try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_create_encounter",
+            "effective_level": NSNumber(value: 4.5),
+            "size": 4
+        ], in: store)) { error in
+            XCTAssertEqual((error as? SidekickDomainError)?.code, "invalid_request")
+            XCTAssertEqual((error as? SidekickDomainError)?.details["field"], "effective_level")
+        }
+        XCTAssertEqual(store.draft, beforeCreate)
+
+        XCTAssertThrowsError(try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_add_participant_group",
+            "name": "Fractional",
+            "quantity": NSNumber(value: 1.5),
+            "expected_revision": 0
+        ], in: store)) { error in
+            XCTAssertEqual((error as? SidekickDomainError)?.code, "invalid_request")
+            XCTAssertEqual((error as? SidekickDomainError)?.details["field"], "quantity")
+        }
+        XCTAssertEqual(store.draft, beforeCreate)
+
+        XCTAssertThrowsError(try SidekickCommandExecutor.execute([
+            "command": "sidekick_increment",
+            "expected_revision": NSNumber(value: Double.infinity)
+        ], in: store)) { error in
+            XCTAssertEqual((error as? SidekickDomainError)?.code, "invalid_request")
+            XCTAssertEqual((error as? SidekickDomainError)?.details["field"], "expected_revision")
+        }
+        XCTAssertEqual(store.draft, beforeCreate)
+    }
+
+    func testLoadDraftAcceptsBrowserCamelCaseNPCProfiles() throws {
+        let group = ParticipantGroup(id: "group_npc", contentID: "creature/group_npc", name: "Captain", level: 5)
+        let profile = NPCProfile(id: "npc_browser", participantGroupID: group.id, narrativeTier: .supporting, name: "Captain", encounterPurpose: "Guard the bell.", immediateGoal: "Delay the party.", moraleExit: "Flee when cornered.")
+        var draft = EncounterDraft(id: "enc_browser", participantGroups: [group])
+        draft.npcProfiles = [profile]
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(draft)) as? [String: Any])
+        var profiles = try XCTUnwrap(object["npcProfiles"] as? [[String: Any]])
+        var browserProfile = profiles[0]
+        for (snake, camel) in [
+            ("object_version", "objectVersion"), ("participant_group_id", "participantGroupID"),
+            ("encounter_purpose", "encounterPurpose"), ("immediate_goal", "immediateGoal"),
+            ("morale_exit", "moraleExit")
+        ] {
+            if let value = browserProfile.removeValue(forKey: snake) { browserProfile[camel] = value }
+        }
+        profiles[0] = browserProfile
+        object["npcProfiles"] = profiles
+        let browserJSON = String(data: try JSONSerialization.data(withJSONObject: object), encoding: .utf8)!
+
+        let store = EncounterStore()
+        XCTAssertNoThrow(try SidekickCommandExecutor.execute(["command": "sidekick_load_draft", "draft_json": browserJSON], in: store))
+        XCTAssertEqual(store.draft.npcProfiles?.first?.id, "npc_browser")
+        XCTAssertEqual(store.draft.npcProfiles?.first?.participantGroupID, "group_npc")
+    }
+
+    func testMalformedNestedPacketIdentityRejectsAtomically() throws {
+        let packet = completePacket()
+        let store = EncounterStore(draft: EncounterDraft(id: "enc_packet", packet: packet.flattenedCorePacket(), packetV1: packet))
+        let before = store.draft
+
+        XCTAssertThrowsError(try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_set_encounter_identity",
+            "value": ["title": "Only title"],
+            "expected_revision": 0
+        ], in: store)) { error in
+            XCTAssertEqual((error as? SidekickDomainError)?.code, "invalid_packet_section")
+        }
+        XCTAssertEqual(store.draft, before)
+    }
+
     func testEachSuccessfulMutationAdvancesRevisionOnce() throws {
         let store = EncounterStore()
         try SidekickCommandExecutor.execute(["command": "sidekick_increment", "expected_revision": 0], in: store)

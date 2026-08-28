@@ -11,6 +11,7 @@ export const PARTICIPATION_MODES = Object.freeze(["mandatory", "avoidable", "con
 const clone = value => structuredClone(value);
 const text = value => typeof value === "string" && value.trim().length > 0;
 const issue = (code, field, message) => ({ code, field, message });
+const fixedOrder = (left, right) => { const a = String(left ?? ""); const b = String(right ?? ""); return a < b ? -1 : a > b ? 1 : 0; };
 
 export function createEmptyPhase({ id = `phase_${globalThis.crypto?.randomUUID?.() ?? "draft"}`, order = 0 } = {}) {
   return {
@@ -75,7 +76,7 @@ export function projectPhaseXP(phase, { participantGroups = [], hazards = [], pa
 }
 
 export function projectPhasesToPacket(document = {}) {
-  const phases = [...(document.phases ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.id).localeCompare(String(b.id)));
+  const phases = [...(document.phases ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || fixedOrder(a.id, b.id));
   const perPhase = phases.map(phase => projectPhaseXP(phase, document));
   const groups = document.participantGroups ?? [];
   const hazards = document.hazards ?? [];
@@ -109,8 +110,8 @@ export class PhaseAuthoringStore {
   remove(phaseID, expectedRevision = null, origin = "gm") { this.check(expectedRevision); const index = this.document.phases.findIndex(item => item.id === phaseID); if (index < 0) { const error = new Error(`Unknown Phase ${phaseID}.`); error.code = "unknown_phase"; throw error; } this.history.push(clone(this.document)); this.document.phases.splice(index, 1); this.document.revision += 1; this.redoHistory = []; this.lastMutationOrigin = origin; return this.revision; }
   undo(expectedRevision = null, origin = "gm") { this.check(expectedRevision); if (!this.history.length) throw Object.assign(new Error("There is no earlier Phase Mutation to restore."), { code: "nothing_to_undo" }); this.redoHistory.push(clone(this.document)); this.document = this.history.pop(); this.document.revision += 1; this.lastMutationOrigin = origin; return this.revision; }
   redo(expectedRevision = null, origin = "gm") { this.check(expectedRevision); if (!this.redoHistory.length) throw Object.assign(new Error("There is no undone Phase Mutation to restore."), { code: "nothing_to_redo" }); this.history.push(clone(this.document)); this.document = this.redoHistory.pop(); this.document.revision += 1; this.lastMutationOrigin = origin; return this.revision; }
-  encodedState() { return JSON.stringify({ format: "sidekickdm-encounter-phases", format_version: 1, document: this.document, origin: this.origin }); }
-  restore(encoded) { const state = typeof encoded === "string" ? JSON.parse(encoded) : encoded; if (state?.format !== "sidekickdm-encounter-phases" || Number(state?.format_version) !== 1) { const error = new Error("The saved Phase authoring state is invalid."); error.code = "future_schema_version"; throw error; } for (const phase of state.document.phases ?? []) { const validation = validatePhase(phase, state.document); if (validation.structuralErrors.length) { const error = new Error(validation.structuralErrors[0].message); error.code = validation.structuralErrors[0].code; throw error; } } this.document = clone(state.document); this.origin = state.origin ?? "gm"; this.lastMutationOrigin = this.origin; this.history = []; this.redoHistory = []; }
+  encodedState() { return JSON.stringify({ format: "sidekickdm-encounter-phases", formatVersion: 1, document: this.document, origin: this.origin, lastMutationOrigin: this.lastMutationOrigin }); }
+  restore(encoded) { const state = typeof encoded === "string" ? JSON.parse(encoded) : encoded; const formatVersion = Number(state?.formatVersion ?? state?.format_version); if (state?.format !== "sidekickdm-encounter-phases" || formatVersion !== 1 || !state.document) { const error = new Error("The saved Phase authoring state is invalid."); error.code = "future_schema_version"; throw error; } for (const phase of state.document.phases ?? []) { const validation = validatePhase(phase, state.document); if (validation.structuralErrors.length) { const error = new Error(validation.structuralErrors[0].message); error.code = validation.structuralErrors[0].code; throw error; } } this.document = clone(state.document); this.origin = state.origin ?? "gm"; this.lastMutationOrigin = state.lastMutationOrigin ?? this.origin; this.history = []; this.redoHistory = []; }
   check(expectedRevision) { if (expectedRevision != null && Number(expectedRevision) !== this.revision) throw Object.assign(new Error("The Phase authoring changed after it was inspected."), { code: "stale_revision", details: { expected_revision: String(expectedRevision), current_revision: String(this.revision) } }); }
 }
 
@@ -121,7 +122,9 @@ export function createEncounterPhaseEditor({ root, phase = createEmptyPhase(), p
   if (!root) throw new Error("Encounter Phase editor requires a root element.");
   let current = clone(phase); let history = []; let redoHistory = [];
   const readiness = () => validatePhase(current, { participantGroups, hazards });
-  const autosave = (origin = "gm") => onAutosave({ format: "sidekickdm-encounter-phases", format_version: 1, phase: clone(current), revision: current.revision, origin });
+  const documentForAutosave = () => ({ objectVersion: 1, encounterID: current.encounterID ?? "enc_demo", title: current.encounterTitle ?? current.title ?? "", revision: Number(current.revision ?? 0), partyLevel: Number(current.partyLevel ?? 1), partySize: Number(current.partySize ?? 4), participantGroups: clone(participantGroups), hazards: clone(hazards), phases: [clone(current)] });
+  const persistence = (origin = undefined) => ({ format: "sidekickdm-encounter-phases", formatVersion: 1, document: documentForAutosave(), phase: clone(current), revision: current.revision, origin: origin ?? "gm", lastMutationOrigin: origin ?? "gm" });
+  const autosave = (origin = "gm") => onAutosave(persistence(origin));
   const updateLocal = (operation, origin = "gm") => {
     const before = clone(current);
     operation(current);
@@ -154,7 +157,7 @@ export function createEncounterPhaseEditor({ root, phase = createEmptyPhase(), p
     root.querySelector('[data-action="redo"]').addEventListener("click", () => { if (!redoHistory.length) return; history.push(clone(current)); current = redoHistory.pop(); current.revision += 1; autosave(); render(); });
   };
   render();
-  return { get phase() { return clone(current); }, get revision() { return current.revision; }, get readiness() { return readiness(); }, render, setPhase(next, origin = "gm") { updateLocal(value => Object.assign(value, clone(next)), origin); }, undo() { if (history.length) { redoHistory.push(clone(current)); current = history.pop(); current.revision += 1; autosave(); render(); } }, redo() { if (redoHistory.length) { history.push(clone(current)); current = redoHistory.pop(); current.revision += 1; autosave(); render(); } }, autosave() { return { format: "sidekickdm-encounter-phases", format_version: 1, phase: clone(current), revision: current.revision }; }, destroy() { root.replaceChildren(); } };
+  return { get phase() { return clone(current); }, get revision() { return current.revision; }, get readiness() { return readiness(); }, render, setPhase(next, origin = "gm") { updateLocal(value => Object.assign(value, clone(next)), origin); }, undo() { if (history.length) { redoHistory.push(clone(current)); current = history.pop(); current.revision += 1; autosave(); render(); } }, redo() { if (redoHistory.length) { history.push(clone(current)); current = redoHistory.pop(); current.revision += 1; autosave(); render(); } }, autosave() { return persistence(); }, destroy() { root.replaceChildren(); } };
 }
 
 export const validateEncounterPhase = validatePhase;

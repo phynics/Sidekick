@@ -77,6 +77,9 @@ export class GenerationRunController {
     else if (typeof generation?.openingDraftJSON === "string") {
       try { this.openingSnapshot = JSON.parse(generation.openingDraftJSON); } catch { this.openingSnapshot = null; }
     }
+    else if (typeof generation?.opening_draft_json === "string") {
+      try { this.openingSnapshot = JSON.parse(generation.opening_draft_json); } catch { this.openingSnapshot = null; }
+    }
   }
 
   get encounterRevision() { return integer(value(this.draft, "revision"), 0); }
@@ -377,9 +380,9 @@ export class GenerationRunController {
   autosave() {
     return {
       format: "sidekickdm-generation-run",
-      format_version: 1,
+      formatVersion: 1,
       draft: clone(this.draft),
-      brief_revision: this.briefRevision,
+      briefRevision: this.briefRevision,
       activity: clone(this.activity)
     };
   }
@@ -401,6 +404,9 @@ export class GenerationRunController {
       else if (generation.opening_draft) this.openingSnapshot = clone(generation.opening_draft);
       else if (typeof generation.openingDraftJSON === "string") {
         try { this.openingSnapshot = JSON.parse(generation.openingDraftJSON); } catch { this.openingSnapshot = null; }
+      }
+      else if (typeof generation.opening_draft_json === "string") {
+        try { this.openingSnapshot = JSON.parse(generation.opening_draft_json); } catch { this.openingSnapshot = null; }
       }
       if (generation.state === GENERATION_RUN_STATES.ACTIVE) generation.state = GENERATION_RUN_STATES.INTERRUPTED;
     } else this.openingSnapshot = null;

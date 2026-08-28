@@ -122,6 +122,20 @@ final class CreatureBuilderTests: XCTestCase {
         XCTAssertEqual(store.draft.participantGroups.first?.name, "Mire Captain")
     }
 
+    func testOriginalCreatureComponentIDUsesLowestAvailableSlotAfterRemoval() throws {
+        let initialGroups = [
+            ParticipantGroup(id: "group_original_1", contentID: "creature/original/old/current", name: "Old", level: 1),
+            ParticipantGroup(id: "group_original_2", contentID: "creature/original/other/current", name: "Other", level: 1)
+        ]
+        let store = EncounterStore(draft: EncounterDraft(participantGroups: initialGroups))
+        try SidekickCommandExecutor.execute(["command": "sidekickdm_remove_component", "component_id": "group_original_1", "expected_revision": 0], in: store)
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: JSONEncoder().encode(completeCreature())) as? [String: Any])
+
+        try SidekickCommandExecutor.execute(["command": "sidekickdm_create_custom_creature", "creature": payload, "expected_revision": 1], in: store)
+
+        XCTAssertEqual(store.draft.participantGroups.map(\.id), ["group_original_2", "group_original_1"])
+    }
+
     func testSharedReadinessCommandReportsMalformedEmbeddedCreature() throws {
         var malformed = OriginalCreature(id: "cre_malformed")
         malformed.identity.name = ""

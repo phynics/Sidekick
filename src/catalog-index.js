@@ -2,6 +2,12 @@ function normalized(value) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function fixedOrder(left, right) {
+  const a = String(left ?? "");
+  const b = String(right ?? "");
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function tokens(value) {
   return normalized(value).split(/[\s,]+/).filter(Boolean);
 }
@@ -21,7 +27,7 @@ export class CatalogIndex {
   constructor(fixture) {
     if (!fixture || fixture.fixture_version !== 1 || !Array.isArray(fixture.entries)) throw new TypeError("A version 1 Sidekick Catalog fixture is required.");
     this.fixture = freeze(structuredClone(fixture));
-    this.entries = Object.freeze([...this.fixture.entries].sort((a, b) => a.content_id.localeCompare(b.content_id)));
+    this.entries = Object.freeze([...this.fixture.entries].sort((a, b) => fixedOrder(a.content_id, b.content_id)));
     this.byId = new Map(this.entries.map((entry) => [entry.content_id, entry]));
   }
 
@@ -81,7 +87,7 @@ export class CatalogIndex {
         return { entry, score };
       })
       .filter(Boolean)
-      .sort((left, right) => right.score - left.score || normalized(left.entry.name).localeCompare(normalized(right.entry.name)) || left.entry.content_id.localeCompare(right.entry.content_id));
+      .sort((left, right) => right.score - left.score || fixedOrder(normalized(left.entry.name), normalized(right.entry.name)) || fixedOrder(left.entry.content_id, right.entry.content_id));
     return { total: matches.length, offset: safeOffset, limit: safeLimit, hasMore: safeOffset + safeLimit < matches.length, results: matches.slice(safeOffset, safeOffset + safeLimit).map(({ entry }) => compact(entry)) };
   }
 
@@ -99,12 +105,13 @@ export class CatalogIndex {
         content_id: contentID,
         catalog_entry: {
           content_id: entry.content_id,
+          ...(this.fixture.catalog_id ? { catalog_id: this.fixture.catalog_id } : {}),
+          ...(this.fixture.source_revision ? { source_revision: this.fixture.source_revision } : {}),
           kind: entry.kind,
           name: entry.name,
           level: entry.level,
           completeness: entry.completeness,
           support: entry.support,
-          provenance: entry.provenance
         },
         quantity,
         adjustment: options.adjustment ?? "normal",

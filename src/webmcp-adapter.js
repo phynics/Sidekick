@@ -68,6 +68,13 @@ const revisionProperties = Object.freeze({
 
 const freeformObject = Object.freeze({ type: "object", additionalProperties: true });
 
+const targetedRevisionProperties = Object.freeze({
+  encounter_id: { type: "string", minLength: 1 },
+  expected_encounter_revision: { type: "integer", minimum: 0 },
+  section: { type: "string", enum: ["encounter_identity", "setup", "battlefield_guidance", "running_guidance", "cohesion", "information_visibility", "outcomes"] },
+  value: freeformObject
+});
+
 const readAnnotations = Object.freeze({
   readOnlyHint: true,
   destructiveHint: false,
@@ -122,14 +129,16 @@ const WRITE_TOOL_DEFINITIONS = Object.freeze([
   definition(`${TOOL_PREFIX}fork_existing_creature`, "Create a detached Forked Creature draft from a complete supported Catalog Creature while preserving existing spellcasting blocks.", { type: "object", properties: { content_id: { type: "string", minLength: 1 }, id: { type: "string" } }, required: ["content_id"], additionalProperties: false }, { untrusted: true }),
   definition(`${TOOL_PREFIX}validate_custom_creature`, "Validate an Original or Forked Creature without mutating the Encounter.", { type: "object", properties: { creature: freeformObject }, required: ["creature"], additionalProperties: false }, { untrusted: true }),
   writeDefinition(`${TOOL_PREFIX}create_custom_creature`, "Validate, embed, and place an Original or Forked Creature atomically.", { ...revisionProperties, creature: freeformObject, quantity: { type: "integer", minimum: 1 }, starting_area: { type: "string" } }, ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision", "creature"]),
+  writeDefinition(`${TOOL_PREFIX}update_custom_creature`, "Validate and replace an encounter-embedded Original or Forked Creature and update its Participant Group projection atomically.", { ...revisionProperties, creature: freeformObject }, ["encounter_id", "expected_encounter_revision", "expected_constraints_revision", "creature"]),
   definition(`${TOOL_PREFIX}validate_simple_hazard`, "Validate a custom Simple Hazard without mutating the Encounter.", { type: "object", properties: { hazard: freeformObject }, required: ["hazard"], additionalProperties: false }, { untrusted: true }),
   writeDefinition(`${TOOL_PREFIX}create_simple_hazard`, "Validate, embed, and place a custom Simple Hazard atomically.", { ...revisionProperties, hazard: freeformObject, participation_mode: { type: "string", enum: ["mandatory", "avoidable", "conditional", "reinforcement"] }, participation_condition: { type: "string" }, placement: { type: "string" } }, ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision", "hazard"]),
   writeDefinition(`${TOOL_PREFIX}update_hazard`, "Update an encounter-embedded custom Simple Hazard and its participation or placement.", { ...revisionProperties, hazard: freeformObject, participation_mode: { type: "string", enum: ["mandatory", "avoidable", "conditional", "reinforcement"] }, participation_condition: { type: "string" }, placement: { type: "string" } }, ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision", "hazard"]),
-  writeDefinition(`${TOOL_PREFIX}remove_component`, "Remove an encounter placement without deleting reusable library records.", { ...revisionProperties, component_id: { type: "string", minLength: 1 } }, ["encounter_id", "expected_encounter_revision", "component_id"]),
-  writeDefinition(`${TOOL_PREFIX}upsert_phase`, "Validate and add or replace one structured Encounter Phase.", { ...revisionProperties, phase: freeformObject }, ["encounter_id", "expected_encounter_revision", "phase"]),
-  ...["encounter_identity", "setup", "battlefield_guidance", "running_guidance", "cohesion", "information_visibility", "outcomes"].map(section => writeDefinition(`${TOOL_PREFIX}set_${section}`, `Set the semantic Encounter Packet ${section.replaceAll("_", " ")} section.`, { ...revisionProperties, value: freeformObject }, ["encounter_id", "expected_encounter_revision", "value"])),
+  writeDefinition(`${TOOL_PREFIX}remove_component`, "Remove an encounter placement without deleting reusable library records.", { ...revisionProperties, component_id: { type: "string", minLength: 1 } }, ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision", "component_id"]),
+  writeDefinition(`${TOOL_PREFIX}upsert_phase`, "Validate and add or replace one structured Encounter Phase.", { ...revisionProperties, phase: freeformObject }, ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision", "phase"]),
+  ...["encounter_identity", "setup", "battlefield_guidance", "running_guidance", "cohesion", "information_visibility", "outcomes"].map(section => writeDefinition(`${TOOL_PREFIX}set_${section}`, `Set the semantic Encounter Packet ${section.replaceAll("_", " ")} section.`, { ...revisionProperties, value: freeformObject }, ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision", "value"])),
   writeDefinition(`${TOOL_PREFIX}finish_generation`, "Finish a structurally complete Generation Run and preserve Design Warnings for review.", { ...revisionProperties, completion_note: { type: "string" } }, ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision"]),
-  writeDefinition(`${TOOL_PREFIX}cancel_generation`, "Cancel a Generation Run and restore its opening Encounter state.", revisionProperties, ["encounter_id", "generation_run_id", "expected_encounter_revision"]),
+  writeDefinition(`${TOOL_PREFIX}cancel_generation`, "Cancel a Generation Run and restore its opening Encounter state.", revisionProperties, ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision"]),
+  writeDefinition(`${TOOL_PREFIX}apply_targeted_revision`, "Apply one named agent-authored revision after a Generation Run; undo restores the finished run first, then the opening Encounter.", targetedRevisionProperties, ["encounter_id", "expected_encounter_revision", "section", "value"]),
   writeDefinition(`${TOOL_PREFIX}undo`, "Undo the most recent authored mutation or complete finished Generation Run.", { encounter_id: revisionProperties.encounter_id, expected_encounter_revision: revisionProperties.expected_encounter_revision }, ["encounter_id", "expected_encounter_revision"]),
   writeDefinition(`${TOOL_PREFIX}redo`, "Redo the most recently undone mutation.", { encounter_id: revisionProperties.encounter_id, expected_encounter_revision: revisionProperties.expected_encounter_revision }, ["encounter_id", "expected_encounter_revision"])
 ]);
@@ -150,6 +159,7 @@ const RECOVERY = Object.freeze({
 });
 
 const registrationsByContext = new WeakMap();
+const registrationLifecyclesByContext = new WeakMap();
 
 const clone = (value) => {
   if (value === undefined) return undefined;
@@ -164,6 +174,19 @@ function keysToCamel(value) {
   if (Array.isArray(value)) return value.map(keysToCamel);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [camelKey(key), keysToCamel(item)]));
+}
+
+function snakeKey(key) {
+  return key
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase();
+}
+
+function keysToSnake(value) {
+  if (Array.isArray(value)) return value.map(keysToSnake);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [snakeKey(key), keysToSnake(item)]));
 }
 
 function firstDefined(...values) {
@@ -336,7 +359,8 @@ function projectBudget(snapshot) {
     base_xp_award: number(firstDefined(budget.base_xp_award, budget.baseXPAward)),
     terrain_adjustment: number(firstDefined(budget.terrain_adjustment, budget.terrainAdjustment)),
     inferred_threat: firstDefined(budget.inferred_threat, budget.inferredThreat, "trivial"),
-    warnings: array(budget.warnings)
+    warnings: array(budget.warnings),
+    phase_budget: projectPhaseBudget(snapshot)
   };
 }
 
@@ -346,14 +370,20 @@ function projectPhaseBudget(snapshot) {
     per_phase: array(firstDefined(budget.perPhase, budget.per_phase)).map(item => ({
       phase_id: firstDefined(item.phaseID, item.phase_id),
       title: text(item.title),
+      participant_ids: array(firstDefined(item.participantIDs, item.participant_ids)),
+      hazard_ids: array(firstDefined(item.hazardIDs, item.hazard_ids)),
       active_xp: number(firstDefined(item.activeXP, item.active_xp)),
       terrain_adjustment: number(firstDefined(item.terrainAdjustment, item.terrain_adjustment)),
-      participation: clone(item.participation ?? {})
+      participation: keysToSnake(item.participation ?? {})
     })),
+    guaranteed_xp: number(firstDefined(budget.guaranteedXP, budget.guaranteed_xp)),
+    avoidable_xp: number(firstDefined(budget.avoidableXP, budget.avoidable_xp)),
+    conditional_xp: number(firstDefined(budget.conditionalXP, budget.conditional_xp)),
+    reinforcement_xp: number(firstDefined(budget.reinforcementXP, budget.reinforcement_xp)),
     peak_active_xp: number(firstDefined(budget.peakActiveXP, budget.peak_active_xp)),
     total_encounter_xp: number(firstDefined(budget.totalEncounterXP, budget.total_encounter_xp)),
     terrain_adjustment: number(firstDefined(budget.terrainAdjustment, budget.terrain_adjustment)),
-    overlap_warnings: array(firstDefined(budget.overlapWarnings, budget.overlap_warnings))
+    overlap_warnings: array(firstDefined(budget.overlapWarnings, budget.overlap_warnings)).map(keysToSnake)
   };
 }
 
@@ -516,6 +546,26 @@ function resolveContext(options) {
   return globalThis.navigator?.modelContext ?? globalThis.document?.modelContext ?? null;
 }
 
+async function disposeLifecycle(modelContext, lifecycle) {
+  if (lifecycle.disposed) return;
+  lifecycle.disposed = true;
+  lifecycle.abortController?.abort();
+  if (lifecycle.owner && lifecycle.ownerHandler && typeof lifecycle.owner.removeEventListener === "function") {
+    lifecycle.owner.removeEventListener("pagehide", lifecycle.ownerHandler);
+  }
+  for (const handle of [...lifecycle.handles].reverse()) await disposeRegistrationHandle(handle);
+  lifecycle.handles.length = 0;
+  registrationLifecyclesByContext.delete(modelContext);
+  registrationsByContext.delete(modelContext);
+}
+
+async function disposeRegistrationHandle(handle) {
+  const dispose = typeof handle === "function" ? handle : handle?.unregister ?? handle?.dispose;
+  if (typeof dispose === "function") {
+    try { await dispose.call(handle); } catch { /* A dead registration is already disconnected. */ }
+  }
+}
+
 export function toolDefinitions() {
   return TOOL_DEFINITIONS;
 }
@@ -545,7 +595,6 @@ export function createWebMCPAdapter(options = {}) {
   }
 
   async function execute(name, input = {}, signal) {
-    void signal;
     let state;
     try {
       state = await readState();
@@ -553,6 +602,7 @@ export function createWebMCPAdapter(options = {}) {
       return envelope(unwrap(null), undefined, errorPayload(error));
     }
     try {
+      if (signal?.aborted) throw Object.assign(new Error("The WebMCP registration is no longer active."), { code: "invalid_request" });
       switch (name) {
         case `${TOOL_PREFIX}get_capabilities`:
           return envelope(state, capabilities(catalog));
@@ -590,6 +640,10 @@ export function createWebMCPAdapter(options = {}) {
           const creature = commitCustomCreature(keysToCamel(input.creature), { origin: "webmcp" });
           return await executeMutation(mutationCommand(name, { ...input, creature }));
         }
+        case `${TOOL_PREFIX}update_custom_creature`: {
+          const creature = commitCustomCreature(keysToCamel(input.creature), { origin: "webmcp" });
+          return await executeMutation(mutationCommand(name, { ...input, creature }));
+        }
         case `${TOOL_PREFIX}validate_simple_hazard`:
           return envelope(state, validateSimpleHazard(keysToCamel(input.hazard)));
         case `${TOOL_PREFIX}create_simple_hazard`: {
@@ -599,6 +653,11 @@ export function createWebMCPAdapter(options = {}) {
         case `${TOOL_PREFIX}update_hazard`: {
           const hazard = createSimpleHazard(keysToCamel(input.hazard));
           return await executeMutation(mutationCommand(name, { ...input, hazard }));
+        }
+        case `${TOOL_PREFIX}apply_targeted_revision`: {
+          const section = text(input.section);
+          const value = keysToCamel(input.value);
+          return await executeMutation(mutationCommand(name, { ...input, value }, { target_command: `${TOOL_PREFIX}set_${section}` }));
         }
         case `${TOOL_PREFIX}remove_component`:
           return await executeMutation(mutationCommand(name, input));
@@ -632,26 +691,53 @@ export function createWebMCPAdapter(options = {}) {
     if (typeof registerTool !== "function") return { available: false, label: "WebMCP detected · adapter pending" };
     const existing = registrationsByContext.get(modelContext);
     if (existing) return existing;
+    const lifecycle = {
+      abortController: typeof AbortController === "function" ? new AbortController() : null,
+      handles: [],
+      owner: source.registrationOwner ?? (source.modelContext === undefined ? globalThis.document : null),
+      ownerHandler: null,
+      disposed: false
+    };
+    registrationLifecyclesByContext.set(modelContext, lifecycle);
     const registration = (async () => {
       try {
-        const abortController = typeof AbortController === "function" ? new AbortController() : null;
-        for (const definition of TOOL_DEFINITIONS) {
-          await registerTool.call(modelContext, {
-            ...definition,
-            execute: (input, signal) => execute(definition.name, input, signal ?? abortController?.signal)
-          });
+        if (lifecycle.owner && typeof lifecycle.owner.addEventListener === "function") {
+          lifecycle.ownerHandler = () => { void unregister(); };
+          lifecycle.owner.addEventListener("pagehide", lifecycle.ownerHandler, { once: true });
         }
-        return { available: true, label: "WebMCP connected" };
+        for (const definition of TOOL_DEFINITIONS) {
+          if (lifecycle.disposed) break;
+          const handle = await registerTool.call(modelContext, {
+            ...definition,
+            execute: (input, signal) => execute(definition.name, input, signal ?? lifecycle.abortController?.signal),
+            signal: lifecycle.abortController?.signal
+          });
+          if (handle && lifecycle.disposed) await disposeRegistrationHandle(handle);
+          else if (handle) lifecycle.handles.push(handle);
+        }
+        return lifecycle.disposed ? { available: false, label: "WebMCP disconnected" } : { available: true, label: "WebMCP connected" };
       } catch (error) {
+        await disposeLifecycle(modelContext, lifecycle);
         console.warn("Sidekick DM could not register WebMCP tools", error);
         return { available: false, label: "WebMCP unavailable · human mode active" };
       }
     })();
     registrationsByContext.set(modelContext, registration);
+    void registration.then(result => {
+      if (!result.available && registrationsByContext.get(modelContext) === registration) registrationsByContext.delete(modelContext);
+    });
     return registration;
   }
 
-  return Object.freeze({ execute, register, toolDefinitions: () => TOOL_DEFINITIONS });
+  async function unregister() {
+    const modelContext = resolveContext(source);
+    const lifecycle = modelContext && registrationLifecyclesByContext.get(modelContext);
+    if (!lifecycle) return { available: false, label: "WebMCP not registered" };
+    await disposeLifecycle(modelContext, lifecycle);
+    return { available: false, label: "WebMCP disconnected" };
+  }
+
+  return Object.freeze({ execute, register, unregister, dispose: unregister, toolDefinitions: () => TOOL_DEFINITIONS });
 }
 
 export async function registerWebMCP(options = {}) {

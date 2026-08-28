@@ -106,12 +106,18 @@ function validatePayload(root) {
   if (data.object_version !== 1) throw new EncounterFileError("unsupported_schema_version", `Encounter object version ${data.object_version} is not supported.`);
   if (!isObject(data.encounter)) throw new EncounterFileError("invalid_payload", "data.encounter is required.");
   const embedded = componentArrays(data);
-  const all = [data.encounter, ...(data.encounter.participant_groups ?? []), ...(data.encounter.hazards ?? []), ...(data.encounter.phases ?? []), ...embedded.creatures, ...embedded.npc_profiles, ...embedded.hazards];
-  const ids = new Set();
-  for (const item of all) {
+  const placed = [data.encounter, ...(data.encounter.participant_groups ?? []), ...(data.encounter.hazards ?? []), ...(data.encounter.phases ?? [])];
+  const placedIDs = new Set();
+  for (const item of placed) {
     if (!isObject(item) || typeof item.id !== "string" || !item.id.trim()) throw new EncounterFileError("invalid_payload", "Every encounter and component object requires an id.");
-    if (ids.has(item.id)) throw new EncounterFileError("duplicate_id", `Duplicate local ID ${item.id}.`);
-    ids.add(item.id);
+    if (placedIDs.has(item.id)) throw new EncounterFileError("duplicate_id", `Duplicate local ID ${item.id}.`);
+    placedIDs.add(item.id);
+  }
+  const embeddedIDs = new Set();
+  for (const item of [...embedded.creatures, ...embedded.npc_profiles, ...embedded.hazards]) {
+    if (!isObject(item) || typeof item.id !== "string" || !item.id.trim()) throw new EncounterFileError("invalid_payload", "Every embedded component requires an id.");
+    if (embeddedIDs.has(item.id)) throw new EncounterFileError("duplicate_id", `Duplicate embedded Component ID ${item.id}.`);
+    embeddedIDs.add(item.id);
   }
   if (!Array.isArray(data.encounter.participant_groups)) throw new EncounterFileError("invalid_payload", "participant_groups must be an array.");
   if (!Array.isArray(data.encounter.hazards)) throw new EncounterFileError("invalid_payload", "hazards must be an array.");
@@ -161,7 +167,9 @@ function normalizeAttachments(attachments = []) {
 
 export function createEncounterFile({ encounter, components = {}, attachments = [], exportedAt = "1970-01-01T00:00:00Z", generator = { product: "Sidekick DM", version: "0.1.0" }, licenseNotices = [] } = {}) {
   if (!isObject(encounter) || typeof encounter.id !== "string") throw new EncounterFileError("invalid_payload", "An Encounter Draft with an id is required.");
+  const embedded = transform(embeddedFor(encounter, components), camelToSnake);
   const normalized = transform(stripDerived(encounter), camelToSnake);
+  for (const key of ["original_creatures", "custom_hazards", "npc_profiles", "embedded_catalog_entries"]) delete normalized[key];
   normalized.object_version = 1;
   normalized.created_at ??= exportedAt;
   normalized.modified_at = exportedAt;
@@ -179,7 +187,7 @@ export function createEncounterFile({ encounter, components = {}, attachments = 
       object_type: "encounter",
       object_version: 1,
       encounter: normalized,
-      embedded_components: transform(embeddedFor(encounter, components), camelToSnake),
+      embedded_components: embedded,
       attachments: normalizeAttachments(attachments)
     }
   };
@@ -240,8 +248,14 @@ export function importEncounterFile(input, { existingIDs = [], importedAt = "197
     npcProfiles: embedded.npcProfiles.map((item) => markImported(remapObjectIDs(item, remapped), importedAt, originalByID.get(item.id) ?? item.id)),
     hazards: embedded.hazards.map((item) => markImported(remapObjectIDs(item, remapped), importedAt, originalByID.get(item.id) ?? item.id))
   };
-  remappedEncounter.originalCreatures = remappedComponents.creatures.length ? remappedComponents.creatures : remappedEncounter.originalCreatures;
-  remappedEncounter.customHazards = remappedComponents.hazards.length ? remappedComponents.hazards : remappedEncounter.customHazards;
+  const isCatalogSnapshot = item => item.snapshotKind === "catalog" || item.snapshot_kind === "catalog" || ((typeof item.contentID === "string" || typeof item.content_id === "string") && item.detail !== undefined);
+  const originalCreatures = remappedComponents.creatures.filter(item => !isCatalogSnapshot(item));
+  const catalogCreatureSnapshots = remappedComponents.creatures.filter(item => !originalCreatures.includes(item));
+  const customHazards = remappedComponents.hazards.filter(item => !isCatalogSnapshot(item));
+  const catalogHazardSnapshots = remappedComponents.hazards.filter(item => !customHazards.includes(item));
+  remappedEncounter.originalCreatures = originalCreatures.length ? originalCreatures : (remappedEncounter.originalCreatures ?? []);
+  remappedEncounter.customHazards = customHazards.length ? customHazards : (remappedEncounter.customHazards ?? []);
+  remappedEncounter.embeddedCatalogEntries = [...catalogCreatureSnapshots, ...catalogHazardSnapshots];
   remappedEncounter.revision = 0;
   remappedEncounter.provenance = { ...(remappedEncounter.provenance ?? {}), origin: "imported", imported_at: importedAt, last_changed_by: "import" };
   return { draft: remappedEncounter, components: remappedComponents, remappedIDs: Object.fromEntries(remapped), importedAt, sourceFormatVersion: root.format_version, migration: root.__migration ?? { from: root.format_version, to: root.format_version, applied: false } };
@@ -516,16 +530,56 @@ export class IndexedDBEncounterStore {
     return ids;
   }
 
-  async importEncounter(input, { importedAt = new Date().toISOString() } = {}) {
-    // This parse/validation pass happens before `transaction("readwrite")`.
-    const result = importEncounterFile(input, { existingIDs: await this.allIDs(), importedAt });
+  async readLibrary() {
+    const db = await this.open();
+    const names = ["encounters", "creatures", "npc_profiles", "hazards", "party_profiles", "attachments"].filter(name => this.stores.includes(name));
+    const transaction = db.transaction(names, "readonly");
+    const values = {};
+    for (const name of names) values[name] = await request(transaction.objectStore(name).getAll());
+    await transactionComplete(transaction);
+    const unique = records => [...new Map((records ?? []).filter(record => record?.id).map(record => [record.id, record])).values()];
+    return {
+      encounters: unique(values.encounters),
+      creatures: unique(values.creatures),
+      npcProfiles: unique(values.npc_profiles),
+      hazards: unique(values.hazards),
+      partyProfiles: unique(values.party_profiles),
+      attachments: unique(values.attachments)
+    };
+  }
+
+  async saveLibraryRecord(kind, value) {
+    const stores = { creature: "creatures", npcProfile: "npc_profiles", hazard: "hazards", partyProfile: "party_profiles" };
+    const storeName = stores[kind];
+    if (!storeName || !this.stores.includes(storeName)) throw new EncounterFileError("invalid_library_kind", `Unsupported library record kind ${kind}.`);
+    if (!isObject(value) || typeof value.id !== "string" || !value.id) throw new EncounterFileError("invalid_payload", "A reusable library record with an id is required.");
+    const db = await this.open();
+    const transaction = db.transaction([storeName], "readwrite");
+    transaction.objectStore(storeName).put(clone(value), value.id);
+    await transactionComplete(transaction);
+    return clone(value);
+  }
+
+  async prepareEncounter(input, { importedAt = new Date().toISOString() } = {}) {
+    return importEncounterFile(input, { existingIDs: await this.allIDs(), importedAt });
+  }
+
+  async persistEncounter(result, { currentKey = null } = {}) {
+    if (!result?.draft || !result?.components) throw new EncounterFileError("invalid_import_result", "A prepared Encounter import is required.");
     const db = await this.open();
     const transaction = db.transaction(["encounters", "creatures", "npc_profiles", "hazards"], "readwrite");
     transaction.objectStore("encounters").put(result.draft, result.draft.id);
+    if (currentKey) transaction.objectStore("encounters").put(result.draft, currentKey);
     for (const creature of result.components.creatures) transaction.objectStore("creatures").put(creature, creature.id);
     for (const profile of result.components.npcProfiles) transaction.objectStore("npc_profiles").put(profile, profile.id);
     for (const hazard of result.components.hazards) transaction.objectStore("hazards").put(hazard, hazard.id);
     await transactionComplete(transaction);
+  }
+
+  async importEncounter(input, { importedAt = new Date().toISOString(), currentKey = null } = {}) {
+    // Parsing, validation, and ID remapping finish before one transaction starts.
+    const result = await this.prepareEncounter(input, { importedAt });
+    await this.persistEncounter(result, { currentKey });
     return result;
   }
 

@@ -98,6 +98,7 @@ export class CatalogIndex {
         command: "sidekickdm_add_existing_participant_group",
         content_id: contentID,
         catalog_entry: {
+          content_id: entry.content_id,
           kind: entry.kind,
           name: entry.name,
           level: entry.level,

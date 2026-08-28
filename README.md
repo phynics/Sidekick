@@ -9,11 +9,22 @@
 
 ## Run the acceptance build
 
-The checked-in `.toolchain-version` pins the Swift, Wasm SDK, Node, and Chromium inputs. Run the full acceptance build with:
+The checked-in `.toolchain-version` pins the Swift, Wasm SDK, Node, and Chromium inputs. The build scripts select that Swift toolchain from the standard system or user toolchain directory. They do not require `SWIFT_EXEC`.
+
+Run the full acceptance build with:
 
 ```text
 npm run acceptance
 ```
+
+To build and verify only the native browser artifact, run:
+
+```text
+npm run build
+npm run verify:native
+```
+
+The Wasm build keeps SwiftPM and compiler module caches in the versioned `native/.build` directory. This prevents modules from another Swift or SDK version from being reused.
 
 `npm run check` is an alias for the same command. The command checks the rules and Catalog fixtures. It runs JavaScript and native tests. It builds the static application and verifies the Wasm artifact. It checks browser source and runs the Chromium manual scenario.
 

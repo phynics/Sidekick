@@ -42,6 +42,25 @@ final class CatalogTests: XCTestCase {
         XCTAssertEqual(catalog.search(CatalogSearchRequest(environments: ["aquatic"])).total, 1)
     }
 
+    func testCatalogSnapshotRejectsCallerSpoofedMetadata() throws {
+        let catalog = CatalogFixture.demo()
+        let snapshot = try XCTUnwrap(catalog.authoritativeSnapshot(for: "creature/monster-core/bog-strider/current"))
+        try catalog.validate(snapshot: snapshot, for: snapshot.contentID)
+
+        var spoofed = snapshot
+        spoofed.summary.name = "Spoofed Creature"
+        XCTAssertThrowsError(try catalog.validate(snapshot: spoofed, for: snapshot.contentID)) { error in
+            XCTAssertEqual((error as? SidekickDomainError)?.code, "catalog_snapshot_mismatch")
+        }
+        XCTAssertFalse(catalog.matches(snapshot: spoofed, for: snapshot.contentID))
+
+        let store = CatalogCompositionStore(catalog: catalog)
+        XCTAssertThrowsError(try store.addExistingCreature(contentID: snapshot.contentID, catalogSnapshot: spoofed)) { error in
+            XCTAssertEqual((error as? SidekickDomainError)?.code, "catalog_snapshot_mismatch")
+        }
+        XCTAssertTrue(store.draft.participantGroups.isEmpty)
+    }
+
     func testExistingCreatureCompositionRejectsIncompleteAndUpdatesXP() throws {
         let catalog = CatalogFixture.demo()
         let store = CatalogCompositionStore(catalog: catalog, draft: EncounterDraft(brief: EncounterBrief(party: PartySnapshot(effectiveLevel: 5, size: 4))))
@@ -89,7 +108,11 @@ final class CatalogTests: XCTestCase {
     }
 
     func testSharedCommandBoundaryValidatesCatalogSnapshotAndUpdatesParticipant() throws {
-        let store = EncounterStore(draft: EncounterDraft(brief: EncounterBrief(party: PartySnapshot(effectiveLevel: 5, size: 4))))
+        let partialSummary = CatalogEntrySummary(contentID: "creature/test/partial/current", kind: .creature, name: "Partial", level: 5, source: "Test", completeness: .partial, support: .unsupported, summary: "Missing required rules text.")
+        let partialProvenance = CatalogProvenance(sourceTitle: "Test", upstreamPack: "test", upstreamIdentifier: "partial", sourceSHA256: String(repeating: "b", count: 64))
+        let demo = CatalogFixture.demo()
+        let catalog = SidekickCatalog(sourceRevision: demo.sourceRevision, entries: demo.entries + [.creature(CatalogCreature(summary: partialSummary, provenance: partialProvenance))])
+        let store = EncounterStore(draft: EncounterDraft(brief: EncounterBrief(party: PartySnapshot(effectiveLevel: 5, size: 4))), catalog: catalog)
         let entry: [String: Any] = ["kind": "creature", "name": "Bog Strider", "level": 5, "completeness": "complete", "support": "supported"]
         try SidekickCommandExecutor.execute(["command": "sidekickdm_add_existing_participant_group", "content_id": "creature/monster-core/bog-strider/current", "catalog_entry": entry, "quantity": 2, "adjustment": "normal", "expected_revision": 0], in: store)
         XCTAssertEqual(store.draft.participantGroups.first?.name, "Bog Strider")
@@ -106,5 +129,46 @@ final class CatalogTests: XCTestCase {
         }
         XCTAssertEqual(store.draft.revision, 2)
         XCTAssertEqual(store.draft.participantGroups.count, 1)
+    }
+
+    func testSharedCommandBoundaryRejectsEverySpoofedCatalogIdentityFieldAtomically() throws {
+        let catalog = CatalogFixture.demo()
+        let contentID = "creature/monster-core/bog-strider/current"
+        let base: [String: Any] = [
+            "content_id": contentID,
+            "kind": "creature",
+            "name": "Bog Strider",
+            "level": 5,
+            "completeness": "complete",
+            "support": "supported",
+            "provenance": [
+                "source_title": "Pathfinder Monster Core",
+                "edition": "current",
+                "upstream": ["system": "foundryvtt-pf2e", "pack": "pathfinder-monster-core", "identifier": "bog-strider"],
+                "source_sha256": String(repeating: "0", count: 64),
+                "license_basis": "ORC",
+                "notices": ["ORC"],
+                "diagnostics": []
+            ]
+        ]
+        let mutations: [(String, ([String: Any]) -> [String: Any])] = [
+            ("content_id", { var value = $0; value["content_id"] = "creature/monster-core/goblin-warrior/current"; return value }),
+            ("name", { var value = $0; value["name"] = "Spoofed Creature"; return value }),
+            ("level", { var value = $0; value["level"] = 99; return value }),
+            ("completeness", { var value = $0; value["completeness"] = "partial"; return value }),
+            ("support", { var value = $0; value["support"] = "unsupported"; return value }),
+            ("provenance", { var value = $0; value["provenance"] = ["source_title": "Spoofed Source"]; return value })
+        ]
+
+        for (field, mutate) in mutations {
+            let store = EncounterStore(catalog: catalog)
+            let command: [String: Any] = ["command": "sidekickdm_add_existing_participant_group", "content_id": contentID, "catalog_entry": mutate(base), "expected_revision": 0]
+            XCTAssertThrowsError(try SidekickCommandExecutor.execute(command, in: store), "\(field) spoof must fail") { error in
+                XCTAssertEqual((error as? SidekickDomainError)?.code, "catalog_snapshot_mismatch")
+            }
+            XCTAssertEqual(store.draft.revision, 0)
+            XCTAssertTrue(store.draft.participantGroups.isEmpty)
+            XCTAssertTrue(store.activity.isEmpty)
+        }
     }
 }

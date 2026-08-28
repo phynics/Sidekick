@@ -95,4 +95,39 @@ final class CreatureBuilderTests: XCTestCase {
         XCTAssertTrue(store.draft.participantGroups.isEmpty)
         XCTAssertTrue(store.draft.originalCreatures?.isEmpty ?? true)
     }
+
+    func testSharedCommandUpdatesEmbeddedCreatureAndParticipantProjectionAtomically() throws {
+        let creature = completeCreature()
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: JSONEncoder().encode(creature)) as? [String: Any])
+        let store = EncounterStore(draft: EncounterDraft(brief: EncounterBrief(party: PartySnapshot(effectiveLevel: 5, size: 4))))
+        try SidekickCommandExecutor.execute(["command": "sidekickdm_create_custom_creature", "creature": payload, "expected_revision": 0, "origin": "webmcp"], in: store)
+
+        var revised = creature
+        revised.identity.name = "Revised Captain"
+        revised.identity.level = 6
+        revised.tactics = "Guards the flooded bell."
+        revised.morale = "Withdraws at half health."
+        let revisedPayload = try XCTUnwrap(try JSONSerialization.jsonObject(with: JSONEncoder().encode(revised)) as? [String: Any])
+        try SidekickCommandExecutor.execute(["command": "sidekickdm_update_custom_creature", "creature": revisedPayload, "expected_revision": 1, "origin": "webmcp"], in: store)
+
+        XCTAssertEqual(store.draft.revision, 2)
+        XCTAssertEqual(store.draft.originalCreatures?.first?.identity.name, "Revised Captain")
+        XCTAssertEqual(store.draft.originalCreatures?.first?.revision, 1)
+        XCTAssertEqual(store.draft.originalCreatures?.first?.provenance.mutationOrigin, "webmcp")
+        XCTAssertEqual(store.draft.participantGroups.first?.name, "Revised Captain")
+        XCTAssertEqual(store.draft.participantGroups.first?.level, 6)
+        XCTAssertEqual(store.draft.participantGroups.first?.sharedTactics, "Guards the flooded bell.")
+        try store.undo(expectedRevision: 2, origin: "gm")
+        XCTAssertEqual(store.draft.originalCreatures?.first?.identity.name, "Mire Captain")
+        XCTAssertEqual(store.draft.participantGroups.first?.name, "Mire Captain")
+    }
+
+    func testSharedReadinessCommandReportsMalformedEmbeddedCreature() throws {
+        var malformed = OriginalCreature(id: "cre_malformed")
+        malformed.identity.name = ""
+        let store = EncounterStore(draft: EncounterDraft(originalCreatures: [malformed]))
+        try SidekickCommandExecutor.execute(["command": "sidekickdm_get_readiness", "encounter_id": store.draft.id], in: store)
+        XCTAssertTrue(store.readiness.structuralErrors.contains { $0.contains("Creature name is required") })
+        XCTAssertEqual(store.draft.revision, 0)
+    }
 }

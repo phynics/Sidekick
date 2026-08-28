@@ -110,6 +110,28 @@ public struct CatalogEntrySummary: Codable, Equatable, Sendable {
     }
 }
 
+/// The identity fields a caller may echo back after reading a Catalog Entry.
+/// The catalog, rather than the caller, remains authoritative for every value.
+public struct CatalogEntrySnapshot: Codable, Equatable, Sendable {
+    public var catalogID: String
+    public var sourceRevision: String
+    public var summary: CatalogEntrySummary
+    public var provenance: CatalogProvenance
+
+    public var contentID: String { summary.contentID }
+
+    public init(catalogID: String, sourceRevision: String, summary: CatalogEntrySummary, provenance: CatalogProvenance) {
+        self.catalogID = catalogID
+        self.sourceRevision = sourceRevision
+        self.summary = summary
+        self.provenance = provenance
+    }
+
+    public init(catalog: SidekickCatalog, entry: CatalogEntry) {
+        self.init(catalogID: catalog.catalogID, sourceRevision: catalog.sourceRevision, summary: entry.summary, provenance: entry.provenance)
+    }
+}
+
 public struct CatalogStrike: Codable, Equatable, Sendable {
     public var name: String
     public var attack: Int?
@@ -355,6 +377,27 @@ public struct SidekickCatalog: Codable, Equatable, Sendable {
         entries.first { $0.summary.contentID == contentID }
     }
 
+    /// Return the immutable identity snapshot that belongs to a ContentID.
+    public func authoritativeSnapshot(for contentID: String) -> CatalogEntrySnapshot? {
+        guard let entry = get(contentID) else { return nil }
+        return CatalogEntrySnapshot(catalog: self, entry: entry)
+    }
+
+    /// Reject metadata echoed by an untrusted caller when it differs from the
+    /// catalog identity or provenance for the requested ContentID.
+    public func validate(snapshot: CatalogEntrySnapshot, for contentID: String) throws {
+        guard let expected = authoritativeSnapshot(for: contentID) else {
+            throw SidekickDomainError("unknown_catalog_entry", "That Catalog Entry is not in the Catalog.")
+        }
+        guard snapshot == expected else {
+            throw SidekickDomainError("catalog_snapshot_mismatch", "The Catalog Entry metadata does not match the authoritative Catalog snapshot.", details: ["content_id": contentID])
+        }
+    }
+
+    public func matches(snapshot: CatalogEntrySnapshot, for contentID: String) -> Bool {
+        (try? validate(snapshot: snapshot, for: contentID)) != nil
+    }
+
     public func all() -> [CatalogEntry] { entries }
 
     public func search(_ request: CatalogSearchRequest = CatalogSearchRequest()) -> CatalogSearchResult {
@@ -487,9 +530,10 @@ public final class CatalogCompositionStore: @unchecked Sendable {
     public var canRedo: Bool { !redoHistory.isEmpty }
 
     @discardableResult
-    public func addExistingCreature(contentID: String, quantity: Int = 1, adjustment: CreatureAdjustment = .normal, faction: Faction = .primaryOpposition, participation: Participation = Participation(), encounterRole: EncounterRole? = nil, startingArea: String = "", sharedTactics: String = "", morale: String = "", expectedRevision: Int? = nil) throws -> String {
+    public func addExistingCreature(contentID: String, quantity: Int = 1, adjustment: CreatureAdjustment = .normal, faction: Faction = .primaryOpposition, participation: Participation = Participation(), encounterRole: EncounterRole? = nil, startingArea: String = "", sharedTactics: String = "", morale: String = "", expectedRevision: Int? = nil, catalogSnapshot: CatalogEntrySnapshot? = nil) throws -> String {
         try check(expectedRevision)
         guard quantity > 0 else { throw SidekickDomainError("invalid_quantity", "Participant quantity must be at least 1.") }
+        if let catalogSnapshot { try catalog.validate(snapshot: catalogSnapshot, for: contentID) }
         guard let entry = catalog.get(contentID) else { throw SidekickDomainError("unknown_catalog_entry", "That Catalog Entry is not in the Catalog.") }
         guard case .creature(let creature) = entry else { throw SidekickDomainError("invalid_participant_kind", "Only Creature Catalog Entries can be added as Participant Groups.") }
         guard creature.summary.completeness == .complete, creature.summary.support == .supported else { throw SidekickDomainError("catalog_entry_partial", "Only complete, supported Catalog Entries can be added to a ready Encounter.") }

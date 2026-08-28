@@ -117,12 +117,13 @@ function catalogEntry(catalog, contentID) {
   return entries.find((entry) => key(entry, "content_id", "contentID", "id") === contentID) ?? null;
 }
 
-function embeddedComponents(encounter) {
+function embeddedComponents(encounter, extra = {}) {
   const embedded = key(encounter, "embedded_components", "embeddedComponents") ?? {};
+  const catalogEntries = array(key(encounter, "embeddedCatalogEntries", "embedded_catalog_entries"));
   return {
-    creatures: [...array(key(encounter, "originalCreatures", "original_creatures")), ...array(embedded.creatures)],
-    npcProfiles: [...array(key(encounter, "npcProfiles", "npc_profiles")), ...array(embedded.npc_profiles ?? embedded.npcProfiles)],
-    hazards: [...array(key(encounter, "customHazards", "custom_hazards")), ...array(embedded.hazards)]
+    creatures: [...array(key(encounter, "originalCreatures", "original_creatures")), ...catalogEntries.filter(item => key(item, "kind") === "creature"), ...array(embedded.creatures), ...array(extra.creatures)],
+    npcProfiles: [...array(key(encounter, "npcProfiles", "npc_profiles")), ...array(embedded.npc_profiles ?? embedded.npcProfiles), ...array(extra.npcProfiles ?? extra.npc_profiles)],
+    hazards: [...array(key(encounter, "customHazards", "custom_hazards")), ...catalogEntries.filter(item => key(item, "kind") === "hazard"), ...array(embedded.hazards), ...array(extra.hazards)]
   };
 }
 
@@ -168,8 +169,9 @@ function normalizeParticipant(group, { catalog, embedded, index }) {
   const entry = catalogEntry(catalog, contentID);
   const embeddedCreature = componentByID(embedded.creatures, key(group, "creatureSnapshotID", "creature_snapshot_id")) ?? embedded.creatures.find((item) => contentIDFor(item) === contentID || key(item, "id") === contentID?.split("/")[2]);
   const detail = object(key(embeddedCreature, "detail") ?? key(entry, "detail"));
-  const hasCatalogProvenance = Boolean(entry || key(embeddedCreature, "catalogProvenance", "catalog_provenance"));
-  const provenance = sourceProvenance(key(embeddedCreature, "catalogProvenance", "catalog_provenance") ? embeddedCreature : entry);
+  const embeddedIsCatalog = key(embeddedCreature, "snapshotKind", "snapshot_kind") === "catalog" || Boolean(key(embeddedCreature, "catalogProvenance", "catalog_provenance"));
+  const hasCatalogProvenance = Boolean(entry || embeddedIsCatalog);
+  const provenance = sourceProvenance(embeddedIsCatalog ? embeddedCreature : entry);
   provenance.isCatalog = hasCatalogProvenance;
   return {
     id: valueOr(key(group, "id"), `participant_${index + 1}`),
@@ -208,8 +210,9 @@ function normalizeHazard(hazard, { catalog, embedded, index }) {
   const entry = catalogEntry(catalog, contentID);
   const embeddedHazard = componentByID(embedded.hazards, key(hazard, "hazardSnapshotID", "hazard_snapshot_id")) ?? embedded.hazards.find((item) => contentIDFor(item) === contentID || key(item, "id") === key(hazard, "id"));
   const detail = object(key(embeddedHazard, "detail") ?? key(entry, "detail"));
-  const hasCatalogProvenance = Boolean(entry || key(embeddedHazard, "catalogProvenance", "catalog_provenance"));
-  const provenance = sourceProvenance(key(embeddedHazard, "catalogProvenance", "catalog_provenance") ? embeddedHazard : entry);
+  const embeddedIsCatalog = key(embeddedHazard, "snapshotKind", "snapshot_kind") === "catalog" || Boolean(key(embeddedHazard, "catalogProvenance", "catalog_provenance"));
+  const hasCatalogProvenance = Boolean(entry || embeddedIsCatalog);
+  const provenance = sourceProvenance(embeddedIsCatalog ? embeddedHazard : entry);
   provenance.isCatalog = hasCatalogProvenance;
   const identity = object(key(embeddedHazard, "identity"));
   const effect = object(key(embeddedHazard, "effect") ?? key(detail, "effect"));
@@ -299,10 +302,10 @@ export function createEncounterPrintProjection(input = {}) {
   const encounter = normalizeEncounter(input);
   const packet = packetFrom(encounter);
   const catalog = input.catalog ?? input.snapshot?.catalog;
-  const embedded = embeddedComponents(encounter);
+  const embedded = embeddedComponents(encounter, input.embeddedComponents ?? input.embedded_components);
   const participants = array(key(encounter, "participantGroups", "participant_groups")).map((group, index) => normalizeParticipant(group, { catalog, embedded, index }));
   const hazards = array(key(encounter, "hazards")).map((hazard, index) => normalizeHazard(hazard, { catalog, embedded, index }));
-  const phases = array(key(encounter, "phases")).map((phase, index) => normalizePhase(phase, { participantGroups: participants, hazards, index })).sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+  const phases = array(key(encounter, "structuredPhases", "structured_phases", "phases")).map((phase, index) => normalizePhase(phase, { participantGroups: participants, hazards, index })).sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
   const components = { participants, hazards, npcProfiles: embedded.npcProfiles.map((profile, index) => ({ id: valueOr(key(profile, "id", "profileID"), `npc_${index + 1}`), name: valueOr(key(profile, "name") ?? key(profile?.profile, "name"), "Unnamed NPC Profile"), tier: valueOr(key(profile, "tier", "narrativeTier") ?? key(profile?.profile, "tier", "narrativeTier"), "Not recorded"), profile: clone(profile) })) };
   const manifest = input.manifest ?? input.catalogManifest ?? input.catalog_manifest;
   return {

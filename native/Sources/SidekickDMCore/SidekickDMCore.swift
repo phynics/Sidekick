@@ -24,8 +24,8 @@ public struct ProvenanceSummary: Codable, Equatable, Sendable { public var origi
 public struct GenerationState: Codable, Equatable, Sendable { public var id: String; public var state: String; public var openingDraftJSON: String?; public var intentSummary: String; public init(id: String, state: String = "active", openingDraftJSON: String? = nil, intentSummary: String = "") { self.id = id; self.state = state; self.openingDraftJSON = openingDraftJSON; self.intentSummary = intentSummary } }
 
 public struct EncounterDraft: Codable, Equatable, Sendable {
-    public var id: String; public var revision: Int; public var briefRevision: Int?; public var constraintsRevision: Int; public var title: String; public var swiftOwnedValue: Int; public var brief: EncounterBrief; public var participantGroups: [ParticipantGroup]; public var hazards: [EncounterHazard]; public var phases: [EncounterPhase]; public var packet: EncounterPacket; public var generation: GenerationState?; public var reviewState: String; public var provenance: ProvenanceSummary; public var originalCreatures: [OriginalCreature]?; public var customHazards: [SimpleHazard]?; public var packetV1: EncounterPacketContentV1?; public var contentBoundaries: GMOwnedContentBoundaries?; public var npcProfiles: [NPCProfile]?; public var structuredPhases: [PhaseAuthoring]?
-    public init(id: String = "enc_demo", title: String = "The Bell Beneath Blackwater", swiftOwnedValue: Int = 7, revision: Int = 0, briefRevision: Int? = 0, constraintsRevision: Int = 0, brief: EncounterBrief = EncounterBrief(), participantGroups: [ParticipantGroup] = [], hazards: [EncounterHazard] = [], phases: [EncounterPhase] = [], packet: EncounterPacket = EncounterPacket(), generation: GenerationState? = nil, reviewState: String = "needed", provenance: ProvenanceSummary = ProvenanceSummary(), originalCreatures: [OriginalCreature]? = [], customHazards: [SimpleHazard]? = [], packetV1: EncounterPacketContentV1? = nil, contentBoundaries: GMOwnedContentBoundaries? = GMOwnedContentBoundaries(), npcProfiles: [NPCProfile]? = [], structuredPhases: [PhaseAuthoring]? = []) { self.id = id; self.revision = revision; self.briefRevision = briefRevision; self.constraintsRevision = constraintsRevision; self.title = title; self.swiftOwnedValue = swiftOwnedValue; self.brief = brief; self.participantGroups = participantGroups; self.hazards = hazards; self.phases = phases; self.packet = packet; self.generation = generation; self.reviewState = reviewState; self.provenance = provenance; self.originalCreatures = originalCreatures; self.customHazards = customHazards; self.packetV1 = packetV1; self.contentBoundaries = contentBoundaries; self.npcProfiles = npcProfiles; self.structuredPhases = structuredPhases }
+    public var id: String; public var revision: Int; public var briefRevision: Int?; public var constraintsRevision: Int; public var title: String; public var swiftOwnedValue: Int; public var brief: EncounterBrief; public var participantGroups: [ParticipantGroup]; public var hazards: [EncounterHazard]; public var phases: [EncounterPhase]; public var packet: EncounterPacket; public var generation: GenerationState?; public var reviewState: String; public var provenance: ProvenanceSummary; public var originalCreatures: [OriginalCreature]?; public var customHazards: [SimpleHazard]?; public var packetV1: EncounterPacketContentV1?; public var contentBoundaries: GMOwnedContentBoundaries?; public var npcProfiles: [NPCProfile]?; public var structuredPhases: [PhaseAuthoring]?; public var embeddedCatalogEntries: [AnyCodable]?
+    public init(id: String = "enc_demo", title: String = "The Bell Beneath Blackwater", swiftOwnedValue: Int = 7, revision: Int = 0, briefRevision: Int? = 0, constraintsRevision: Int = 0, brief: EncounterBrief = EncounterBrief(), participantGroups: [ParticipantGroup] = [], hazards: [EncounterHazard] = [], phases: [EncounterPhase] = [], packet: EncounterPacket = EncounterPacket(), generation: GenerationState? = nil, reviewState: String = "needed", provenance: ProvenanceSummary = ProvenanceSummary(), originalCreatures: [OriginalCreature]? = [], customHazards: [SimpleHazard]? = [], packetV1: EncounterPacketContentV1? = nil, contentBoundaries: GMOwnedContentBoundaries? = GMOwnedContentBoundaries(), npcProfiles: [NPCProfile]? = [], structuredPhases: [PhaseAuthoring]? = [], embeddedCatalogEntries: [AnyCodable]? = nil) { self.id = id; self.revision = revision; self.briefRevision = briefRevision; self.constraintsRevision = constraintsRevision; self.title = title; self.swiftOwnedValue = swiftOwnedValue; self.brief = brief; self.participantGroups = participantGroups; self.hazards = hazards; self.phases = phases; self.packet = packet; self.generation = generation; self.reviewState = reviewState; self.provenance = provenance; self.originalCreatures = originalCreatures; self.customHazards = customHazards; self.packetV1 = packetV1; self.contentBoundaries = contentBoundaries; self.npcProfiles = npcProfiles; self.structuredPhases = structuredPhases; self.embeddedCatalogEntries = embeddedCatalogEntries }
     public mutating func increment() { swiftOwnedValue += 1 }
 }
 
@@ -64,9 +64,13 @@ public enum EncounterMath {
 public struct SidekickDomainError: Error, Sendable { public let code: String; public let message: String; public let details: [String: String]; public init(_ code: String, _ message: String, details: [String: String] = [:]) { self.code = code; self.message = message; self.details = details } }
 
 public final class EncounterStore: @unchecked Sendable {
-    public private(set) var draft: EncounterDraft; public private(set) var activity: [ActivityEntry] = []; private var history: [EncounterDraft] = []; private var redoHistory: [EncounterDraft] = []
-    public init(draft: EncounterDraft = EncounterDraft()) { self.draft = draft }
-    public func load(_ loaded: EncounterDraft) { draft = loaded; history.removeAll(); redoHistory.removeAll(); activity.removeAll() }
+    public private(set) var draft: EncounterDraft; public let catalog: SidekickCatalog; public private(set) var activity: [ActivityEntry] = []; private var history: [EncounterDraft] = []; private var redoHistory: [EncounterDraft] = []
+    public init(draft: EncounterDraft = EncounterDraft(), catalog: SidekickCatalog = CatalogFixture.demo()) { self.draft = draft; self.catalog = catalog }
+    public func load(_ loaded: EncounterDraft) {
+        var restored = loaded
+        if restored.generation?.state == "active" { restored.generation?.state = "interrupted" }
+        draft = restored; history.removeAll(); redoHistory.removeAll(); activity.removeAll()
+    }
     public var budget: BudgetProjection { EncounterMath.budget(for: draft) }
     public var readiness: ReadinessProjection {
         var errors = [String]()
@@ -108,12 +112,12 @@ public enum SidekickCommandExecutor {
         if let expectedBrief, expectedBrief != (store.draft.briefRevision ?? 0) { throw SidekickDomainError("stale_brief_revision", "The Encounter Brief changed after it was inspected.", details: ["expected_brief_revision": "\(expectedBrief)", "current_brief_revision": "\(store.draft.briefRevision ?? 0)"]) }
         if let expectedConstraints, expectedConstraints != store.draft.constraintsRevision { throw SidekickDomainError("stale_constraints", "The Content Boundaries or Party Snapshot changed after it was inspected.", details: ["expected_constraints_revision": "\(expectedConstraints)", "current_constraints_revision": "\(store.draft.constraintsRevision)"]) }
         let reads = ["sidekickdm_get_budget", "sidekickdm_get_encounter_summary", "sidekickdm_get_encounter_brief", "sidekickdm_get_readiness"]
-        let lifecycle = ["sidekickdm_begin_generation", "sidekickdm_finish_generation", "sidekickdm_cancel_generation"]
         if let activeRun = store.draft.generation {
-            if ["sidekickdm_finish_generation", "sidekickdm_cancel_generation"].contains(name) {
-                guard command["generation_run_id"] as? String == activeRun.id else { throw SidekickDomainError("wrong_generation_run", "That Generation Run is no longer active.", details: ["current_generation_run_id": activeRun.id]) }
-            } else if !reads.contains(name) && !lifecycle.contains(name) {
+            let activeMutation = !reads.contains(name) && name != "sidekickdm_begin_generation"
+            if activeMutation {
                 guard origin != "gm" && origin != "manual" else { throw SidekickDomainError("manual_write_locked", "GM writes are locked while a Generation Run is active.") }
+                guard let expectedConstraints else { throw SidekickDomainError("invalid_request", "Active Generation Run mutations require the current Constraints Revision.") }
+                guard expectedConstraints == store.draft.constraintsRevision else { throw SidekickDomainError("stale_constraints", "The Content Boundaries or Party Snapshot changed after it was inspected.", details: ["expected_constraints_revision": "\(expectedConstraints)", "current_constraints_revision": "\(store.draft.constraintsRevision)"]) }
                 guard command["generation_run_id"] as? String == activeRun.id else { throw SidekickDomainError("wrong_generation_run", "That Generation Run is no longer active.", details: ["current_generation_run_id": activeRun.id]) }
             }
         }
@@ -135,17 +139,23 @@ public enum SidekickCommandExecutor {
         case "sidekickdm_set_party_snapshot", "sidekickdm_update_party_snapshot": let party = command["party"] as? [String: Any]; let level = number(command, "effective_level") ?? (party.flatMap { number($0, "effective_level") }) ?? store.draft.brief.party.effectiveLevel; let size = number(command, "size") ?? (party.flatMap { number($0, "size") }) ?? store.draft.brief.party.size; guard (1...20).contains(level), (1...8).contains(size) else { throw SidekickDomainError("invalid_party_profile", "Effective party level must be 1–20 and party size 1–8.") }; try store.mutate(description: "Updated Party Snapshot", origin: origin, expectedRevision: expected) { $0.brief.party.effectiveLevel = level; $0.brief.party.size = size; $0.briefRevision = ($0.briefRevision ?? 0) + 1; $0.constraintsRevision += 1 }
         case "sidekickdm_set_threat_target", "sidekickdm_update_threat_target": let target = command["threat_target"] as? [String: Any]; let kind = ThreatTargetKind(rawValue: (command["kind"] as? String) ?? (target?["kind"] as? String) ?? "moderate") ?? .moderate; let custom = number(command, "custom_xp") ?? (target.flatMap { number($0, "custom_xp") }); guard kind != .custom || (custom ?? -1) >= 0 else { throw SidekickDomainError("invalid_threat_target", "Custom Threat Target XP must be zero or greater.") }; try store.mutate(description: "Set Threat Target to \(kind.rawValue)", origin: origin, expectedRevision: expected) { $0.brief.threatTarget = ThreatTarget(kind: kind, customXP: custom); $0.briefRevision = ($0.briefRevision ?? 0) + 1 }
         case "sidekickdm_add_participant_group", "sidekickdm_add_existing_participant_group":
-            let catalogEntry = command["catalog_entry"] as? [String: Any]
+            let requestedContentID = (command["content_id"] as? String) ?? ""
+            let authoritativeEntry: CatalogEntry?
             if name == "sidekickdm_add_existing_participant_group" {
-                guard catalogEntry?["kind"] as? String == "creature" else { throw SidekickDomainError("invalid_participant_kind", "Only Creature Catalog Entries can be added as Participant Groups.") }
-                guard catalogEntry?["completeness"] as? String == "complete", catalogEntry?["support"] as? String == "supported" else { throw SidekickDomainError("catalog_entry_partial", "Only complete, supported Catalog Entries can be added to a ready Encounter.") }
+                guard !requestedContentID.isEmpty, let entry = store.catalog.get(requestedContentID) else { throw SidekickDomainError("unknown_catalog_entry", "That Catalog Entry is not in the Catalog.") }
+                authoritativeEntry = entry
+                try validateCatalogEntry(command["catalog_entry"] as? [String: Any], for: requestedContentID, against: entry)
+                guard case .creature(let creature) = entry else { throw SidekickDomainError("invalid_participant_kind", "Only Creature Catalog Entries can be added as Participant Groups.") }
+                guard creature.summary.completeness == .complete, creature.summary.support == .supported else { throw SidekickDomainError("catalog_entry_partial", "Only complete, supported Catalog Entries can be added to a ready Encounter.") }
+            } else {
+                authoritativeEntry = nil
             }
-            let level = number(catalogEntry ?? [:], "level") ?? number(command, "level") ?? store.draft.brief.party.effectiveLevel
+            let level = authoritativeEntry?.summary.level ?? number(command, "level") ?? store.draft.brief.party.effectiveLevel
             let quantity = number(command, "quantity") ?? 1
             guard quantity > 0 else { throw SidekickDomainError("invalid_quantity", "Participant quantity must be at least 1.") }
             let id = (command["id"] as? String) ?? "group_\(store.draft.participantGroups.count + 1)"
             let content = (command["content_id"] as? String) ?? "creature/custom/\(id)/current"
-            let participantName = (catalogEntry?["name"] as? String) ?? (command["name"] as? String) ?? content
+            let participantName = authoritativeEntry?.summary.name ?? (command["name"] as? String) ?? content
             guard let adjustment = CreatureAdjustment(rawValue: (command["adjustment"] as? String) ?? "normal") else { throw SidekickDomainError("invalid_adjustment", "Adjustment must be normal, weak, or elite.") }
             let faction = Faction(rawValue: (command["faction"] as? String) ?? "primary_opposition") ?? .primaryOpposition
             let participationObject = command["participation"] as? [String: Any]
@@ -179,6 +189,28 @@ public enum SidekickCommandExecutor {
                 if let index = creatures.firstIndex(where: { $0.id == snapshot.id }) { creatures[index] = snapshot } else { creatures.append(snapshot) }
                 $0.originalCreatures = creatures
                 $0.participantGroups.append(group)
+            }
+        case "sidekickdm_update_custom_creature":
+            guard let payload = command["creature"] as? [String: Any], JSONSerialization.isValidJSONObject(payload), let data = try? JSONSerialization.data(withJSONObject: payload), let decoded = try? JSONDecoder().decode(OriginalCreature.self, from: data) else { throw SidekickDomainError("invalid_creature", "The Original Creature payload is invalid.") }
+            guard let existingIndex = store.draft.originalCreatures?.firstIndex(where: { $0.id == decoded.id }), let existing = store.draft.originalCreatures?[existingIndex] else { throw SidekickDomainError("unknown_component", "That Original Creature is not embedded in the Encounter.") }
+            let validation = CreatureBuilder.validate(decoded)
+            guard validation.structuralErrors.isEmpty else { throw SidekickDomainError("creature_structural_errors", "The Original Creature has structural errors.", details: ["fields": validation.structuralErrors.map(\.field).joined(separator: ",")]) }
+            var snapshot = try CreatureBuilder.create(decoded, origin: origin)
+            snapshot.revision = existing.revision + 1
+            snapshot.provenance.origin = existing.provenance.origin
+            snapshot.provenance.basedOnContentID = existing.provenance.basedOnContentID
+            snapshot.provenance.createdAt = existing.provenance.createdAt
+            snapshot.provenance.mutationOrigin = origin
+            let contentID = "creature/original/\(snapshot.id)/current"
+            try store.mutate(description: "Updated Original Creature \(snapshot.identity.name)", origin: origin, expectedRevision: expected) {
+                $0.originalCreatures?[existingIndex] = snapshot
+                for index in $0.participantGroups.indices where $0.participantGroups[index].contentID == contentID {
+                    $0.participantGroups[index].name = snapshot.identity.name
+                    $0.participantGroups[index].level = snapshot.identity.level
+                    $0.participantGroups[index].encounterRole = snapshot.identity.encounterRole
+                    $0.participantGroups[index].sharedTactics = snapshot.tactics
+                    $0.participantGroups[index].morale = snapshot.morale
+                }
             }
         case "sidekickdm_remove_component":
             guard let id = command["component_id"] as? String else { throw SidekickDomainError("unknown_component", "A component ID is required.") }
@@ -274,6 +306,16 @@ public enum SidekickCommandExecutor {
                 if let value { packet.identity = value } else { if let title = command["title"] as? String { packet.identity.title = title }; if let premise = command["premise"] as? String { packet.identity.premise = premise } }
                 $0.packetV1 = packet; $0.packet = packet.flattenedCorePacket(); $0.title = packet.identity.title.isEmpty ? $0.title : packet.identity.title
             }
+        case "sidekickdm_apply_targeted_revision":
+            guard expected != nil else { throw SidekickDomainError("invalid_request", "A targeted revision requires the current Encounter Revision.") }
+            guard store.draft.generation == nil else { throw SidekickDomainError("manual_write_locked", "Targeted revisions are available after a Generation Run finishes.") }
+            guard origin != "gm" && origin != "manual" else { throw SidekickDomainError("manual_write_locked", "A targeted revision is reserved for agent-authored changes.") }
+            let target = (command["target_command"] as? String) ?? ((command["section"] as? String).map { "sidekickdm_set_\($0)" } ?? "")
+            let allowed = ["sidekickdm_set_encounter_identity", "sidekickdm_set_setup", "sidekickdm_set_battlefield_guidance", "sidekickdm_set_running_guidance", "sidekickdm_set_cohesion", "sidekickdm_set_information_visibility", "sidekickdm_set_outcomes"]
+            guard allowed.contains(target) else { throw SidekickDomainError("invalid_request", "A supported Encounter Packet section is required for a targeted revision.") }
+            var forwarded = command
+            forwarded["command"] = target
+            try execute(forwarded, in: store)
         case "sidekickdm_set_setup": try mutatePacketSection(command, store: store, expected: expected, origin: origin, description: "Updated Encounter setup") { $0.setup = try requiredPacketSection(PacketSetupSection.self, command: command) }
         case "sidekickdm_set_battlefield_guidance": try mutatePacketSection(command, store: store, expected: expected, origin: origin, description: "Updated battlefield guidance") { $0.battlefield = try requiredPacketSection(PacketBattlefieldSection.self, command: command) }
         case "sidekickdm_set_running_guidance": try mutatePacketSection(command, store: store, expected: expected, origin: origin, description: "Updated running guidance") { $0.runningGuidance = try requiredPacketSection(PacketRunningGuidanceSection.self, command: command) }
@@ -309,6 +351,38 @@ public enum SidekickCommandExecutor {
         default: throw SidekickDomainError("unknown_command", "Unknown semantic command: \(name).")
         }
     }
+    private static func validateCatalogEntry(_ supplied: [String: Any]?, for contentID: String, against expected: CatalogEntry) throws {
+        guard let supplied else { return }
+        let summary = expected.summary
+        if hasValue(supplied, keys: ["content_id", "contentID"]) { guard let value = suppliedString(supplied, keys: ["content_id", "contentID"]), value == summary.contentID else { throw catalogSnapshotMismatch(contentID) } }
+        if hasValue(supplied, keys: ["kind"]) { guard let value = suppliedString(supplied, keys: ["kind"]), value == summary.kind.rawValue else { throw catalogSnapshotMismatch(contentID) } }
+        if hasValue(supplied, keys: ["name"]) { guard let value = suppliedString(supplied, keys: ["name"]), value == summary.name else { throw catalogSnapshotMismatch(contentID) } }
+        if supplied["level"] != nil, suppliedNumber(supplied, key: "level") != summary.level { throw catalogSnapshotMismatch(contentID) }
+        if hasValue(supplied, keys: ["completeness"]) { guard let value = suppliedString(supplied, keys: ["completeness"]), value == summary.completeness.rawValue else { throw catalogSnapshotMismatch(contentID) } }
+        if hasValue(supplied, keys: ["support"]) { guard let value = suppliedString(supplied, keys: ["support"]), value == summary.support.rawValue else { throw catalogSnapshotMismatch(contentID) } }
+        if let rawProvenance = supplied["provenance"] {
+            guard let provenance = rawProvenance as? [String: Any] else { throw catalogSnapshotMismatch(contentID) }
+            let expectedProvenance = expected.provenance
+            if hasValue(provenance, keys: ["source_title", "sourceTitle"]) { guard let value = suppliedString(provenance, keys: ["source_title", "sourceTitle"]), value == expectedProvenance.sourceTitle else { throw catalogSnapshotMismatch(contentID) } }
+            if let value = suppliedOptionalString(provenance, keys: ["source_page", "sourcePage"]), value != expectedProvenance.sourcePage { throw catalogSnapshotMismatch(contentID) }
+            if hasValue(provenance, keys: ["edition"]) { guard let value = suppliedString(provenance, keys: ["edition"]), value == expectedProvenance.edition.rawValue else { throw catalogSnapshotMismatch(contentID) } }
+            let upstream = provenance["upstream"] as? [String: Any]
+            if provenance["upstream"] != nil && upstream == nil { throw catalogSnapshotMismatch(contentID) }
+            if hasValue(provenance, keys: ["upstream_system", "upstreamSystem"]) || upstream?.keys.contains("system") == true { guard let value = suppliedString(provenance, keys: ["upstream_system", "upstreamSystem"]) ?? upstream.flatMap({ suppliedString($0, keys: ["system"]) }), value == expectedProvenance.upstreamSystem else { throw catalogSnapshotMismatch(contentID) } }
+            if hasValue(provenance, keys: ["upstream_pack", "upstreamPack"]) || upstream?.keys.contains("pack") == true { guard let value = suppliedString(provenance, keys: ["upstream_pack", "upstreamPack"]) ?? upstream.flatMap({ suppliedString($0, keys: ["pack"]) }), value == expectedProvenance.upstreamPack else { throw catalogSnapshotMismatch(contentID) } }
+            if hasValue(provenance, keys: ["upstream_identifier", "upstreamIdentifier"]) || upstream?.keys.contains("identifier") == true { guard let value = suppliedString(provenance, keys: ["upstream_identifier", "upstreamIdentifier"]) ?? upstream.flatMap({ suppliedString($0, keys: ["identifier"]) }), value == expectedProvenance.upstreamIdentifier else { throw catalogSnapshotMismatch(contentID) } }
+            if hasValue(provenance, keys: ["source_sha256", "sourceSHA256"]) { guard let value = suppliedString(provenance, keys: ["source_sha256", "sourceSHA256"]), value == expectedProvenance.sourceSHA256 else { throw catalogSnapshotMismatch(contentID) } }
+            if hasValue(provenance, keys: ["license_basis", "licenseBasis"]) { guard let value = suppliedString(provenance, keys: ["license_basis", "licenseBasis"]), value == expectedProvenance.licenseBasis else { throw catalogSnapshotMismatch(contentID) } }
+            if hasValue(provenance, keys: ["notices"]) { guard let value = suppliedStringArray(provenance, keys: ["notices"]), value == expectedProvenance.notices else { throw catalogSnapshotMismatch(contentID) } }
+            if hasValue(provenance, keys: ["diagnostics"]) { guard let value = suppliedStringArray(provenance, keys: ["diagnostics"]), value == expectedProvenance.diagnostics else { throw catalogSnapshotMismatch(contentID) } }
+        }
+    }
+    private static func catalogSnapshotMismatch(_ contentID: String) -> SidekickDomainError { SidekickDomainError("catalog_snapshot_mismatch", "The Catalog Entry metadata does not match the authoritative Catalog snapshot.", details: ["content_id": contentID]) }
+    private static func hasValue(_ dictionary: [String: Any], keys: [String]) -> Bool { keys.contains { dictionary[$0] != nil } }
+    private static func suppliedString(_ dictionary: [String: Any], keys: [String]) -> String? { for key in keys { if let value = dictionary[key] as? String { return value } }; return nil }
+    private static func suppliedOptionalString(_ dictionary: [String: Any], keys: [String]) -> String? { for key in keys where dictionary[key] != nil { return dictionary[key] as? String }; return nil }
+    private static func suppliedNumber(_ dictionary: [String: Any], key: String) -> Int? { (dictionary[key] as? NSNumber)?.intValue ?? (dictionary[key] as? Int) }
+    private static func suppliedStringArray(_ dictionary: [String: Any], keys: [String]) -> [String]? { for key in keys where dictionary[key] != nil { return dictionary[key] as? [String] }; return nil }
     private static func number(_ command: [String: Any], _ key: String) -> Int? { (command[key] as? NSNumber)?.intValue ?? (command[key] as? Int) }
     private static func packetSection<T: Decodable>(_ type: T.Type, command: [String: Any], keys: [String] = ["value"]) throws -> T? { for key in keys { if let payload = command[key], JSONSerialization.isValidJSONObject(payload), let data = try? JSONSerialization.data(withJSONObject: payload), let decoded = try? JSONDecoder().decode(type, from: data) { return decoded } }; return nil }
     private static func requiredPacketSection<T: Decodable>(_ type: T.Type, command: [String: Any], keys: [String] = ["value"]) throws -> T { guard let value = try packetSection(type, command: command, keys: keys) else { throw SidekickDomainError("invalid_packet_section", "The Encounter Packet section payload is invalid.") }; return value }

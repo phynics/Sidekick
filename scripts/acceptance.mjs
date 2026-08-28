@@ -1,9 +1,17 @@
-import { readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const toolchain = Object.fromEntries(readFileSync(join(root, ".toolchain-version"), "utf8").split(/\r?\n/).filter(Boolean).map((line) => line.split("=", 2)));
+const toolchainName = `${toolchain.swift_toolchain}.xctoolchain`;
+const swift = [
+  join("/Library/Developer/Toolchains", toolchainName, "usr/bin/swift"),
+  join(homedir(), "Library/Developer/Toolchains", toolchainName, "usr/bin/swift")
+].find(existsSync);
+if (!swift) throw new Error(`The pinned Swift executable was not found. Install ${toolchain.swift_toolchain} and rerun npm run acceptance.`);
 
 function run(label, executable, args) {
   console.log(`\n▶ ${label}`);
@@ -25,7 +33,7 @@ const browserTests = readdirSync(join(root, "tests"))
 run("JavaScript domain and browser-boundary tests", process.execPath, ["--test", ...browserTests]);
 
 run("static Wasm and browser build", process.execPath, [join(root, "scripts/build.mjs")]);
-run("native Swift package tests", process.env.SWIFT_EXEC ?? "swift", ["test", "--package-path", "native"]);
+run("native Swift package tests", swift, ["test", "--package-path", "native"]);
 run("Wasm artifact verification", process.execPath, [join(root, "scripts/verify-native.mjs")]);
 run("browser source contract", process.execPath, [join(root, "scripts/verify-browser-source.mjs")]);
 run("Chromium manual and WebMCP acceptance scenario", process.execPath, [join(root, "scripts/chromium-smoke.mjs")]);

@@ -44,6 +44,26 @@ final class EncounterMathTests: XCTestCase {
         }
     }
 
+    func testSharedLoadMarksPersistedActiveGenerationInterrupted() throws {
+        let opening = EncounterDraft(id: "enc_reload", revision: 3)
+        let openingJSON = String(data: try JSONEncoder().encode(opening), encoding: .utf8)
+        var persisted = opening
+        persisted.generation = GenerationState(id: "run_reload", state: "active", openingDraftJSON: openingJSON, intentSummary: "Resume the flooded shrine.")
+        let persistedJSON = String(data: try JSONEncoder().encode(persisted), encoding: .utf8) ?? ""
+        let store = EncounterStore()
+
+        try SidekickCommandExecutor.execute(["command": "sidekick_load_draft", "draft_json": persistedJSON], in: store)
+
+        XCTAssertEqual(store.draft.generation?.state, "interrupted")
+        XCTAssertEqual(store.draft.generation?.id, "run_reload")
+        XCTAssertEqual(store.draft.generation?.openingDraftJSON, openingJSON)
+        let before = store.draft
+        XCTAssertThrowsError(try SidekickCommandExecutor.execute(["command": "sidekickdm_set_party_snapshot", "effective_level": 5, "expected_revision": 3, "origin": "gm"], in: store)) { error in
+            XCTAssertEqual((error as? SidekickDomainError)?.code, "manual_write_locked")
+        }
+        XCTAssertEqual(store.draft, before)
+    }
+
     func testCreateEncounterCapturesPartyAndThreatTarget() throws {
         let store = EncounterStore()
         try SidekickCommandExecutor.execute([
@@ -95,6 +115,7 @@ final class EncounterMathTests: XCTestCase {
             "command": "sidekickdm_cancel_generation",
             "generation_run_id": "run_test",
             "expected_revision": 3,
+            "expected_constraints_revision": 0,
             "origin": "webmcp"
         ], in: store)
 
@@ -178,5 +199,58 @@ final class EncounterMathTests: XCTestCase {
         var expectedOpening = opening
         expectedOpening.revision = 6
         XCTAssertEqual(store.draft, expectedOpening)
+    }
+
+    func testSharedCommandBoundaryRequiresActiveRunAndConstraintsRevisions() throws {
+        let store = EncounterStore(draft: EncounterDraft(id: "enc_guard", briefRevision: 2, constraintsRevision: 4))
+        try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_begin_generation", "encounter_id": "enc_guard", "generation_run_id": "run_guard",
+            "expected_revision": 0, "expected_brief_revision": 2, "expected_constraints_revision": 4,
+            "content_boundaries_acknowledged": true, "origin": "webmcp"
+        ], in: store)
+
+        XCTAssertThrowsError(try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_add_participant_group", "encounter_id": "enc_guard",
+            "expected_revision": 1, "origin": "webmcp"
+        ], in: store)) { error in
+            XCTAssertEqual((error as? SidekickDomainError)?.code, "invalid_request")
+        }
+        XCTAssertThrowsError(try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_add_participant_group", "encounter_id": "enc_guard", "generation_run_id": "run_guard",
+            "expected_revision": 1, "origin": "webmcp"
+        ], in: store)) { error in
+            XCTAssertEqual((error as? SidekickDomainError)?.code, "invalid_request")
+        }
+        XCTAssertThrowsError(try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_add_participant_group", "encounter_id": "enc_guard", "generation_run_id": "run_guard",
+            "expected_revision": 1, "expected_constraints_revision": 3, "origin": "webmcp"
+        ], in: store)) { error in
+            XCTAssertEqual((error as? SidekickDomainError)?.code, "stale_constraints")
+        }
+    }
+
+    func testExplicitTargetedRevisionCommandUsesTwoUndoEntries() throws {
+        let packet = completePacket()
+        let store = EncounterStore(draft: EncounterDraft(id: "enc_target", briefRevision: 2, constraintsRevision: 4, packet: packet.flattenedCorePacket(), packetV1: packet))
+        try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_begin_generation", "encounter_id": "enc_target", "generation_run_id": "run_target",
+            "expected_revision": 0, "expected_brief_revision": 2, "expected_constraints_revision": 4,
+            "content_boundaries_acknowledged": true, "origin": "webmcp"
+        ], in: store)
+        try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_finish_generation", "encounter_id": "enc_target", "generation_run_id": "run_target",
+            "expected_revision": 1, "expected_constraints_revision": 4, "origin": "webmcp"
+        ], in: store)
+        try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_apply_targeted_revision", "encounter_id": "enc_target", "expected_revision": 2,
+            "section": "encounter_identity", "value": ["objectVersion": 1, "title": "Targeted", "premise": "The bell sounds.", "objective": "Stop it.", "stakes": "The flood rises."], "origin": "webmcp"
+        ], in: store)
+        XCTAssertEqual(store.draft.title, "Targeted")
+        try store.undo(expectedRevision: 3, origin: "gm")
+        XCTAssertNil(store.draft.generation)
+        XCTAssertEqual(store.draft.title, "The Bell Beneath Blackwater")
+        try store.undo(expectedRevision: 4, origin: "gm")
+        XCTAssertEqual(store.draft.revision, 5)
+        XCTAssertEqual(store.draft.title, "The Bell Beneath Blackwater")
     }
 }

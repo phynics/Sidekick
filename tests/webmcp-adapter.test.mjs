@@ -95,7 +95,11 @@ test("defines the version 1 read-only Sidekick surface", () => {
     assert.equal(definition.annotations.readOnlyHint, true);
   }
   assert.ok(toolDefinitions().some(({ name, readOnlyHint }) => name === "sidekickdm_begin_generation" && readOnlyHint === false));
+  const creatureUpdate = toolDefinitions().find(({ name }) => name === "sidekickdm_update_custom_creature");
+  assert.deepEqual(creatureUpdate.inputSchema.required, ["encounter_id", "expected_encounter_revision", "expected_constraints_revision", "creature"]);
   assert.ok(toolDefinitions().some(({ name, readOnlyHint }) => name === "sidekickdm_upsert_phase" && readOnlyHint === false));
+  const targeted = toolDefinitions().find(({ name }) => name === "sidekickdm_apply_targeted_revision");
+  assert.deepEqual(targeted.inputSchema.required, ["encounter_id", "expected_encounter_revision", "section", "value"]);
   assert.equal(toolDefinitions().find(({ name }) => name.endsWith("get_encounter_brief")).untrustedContentHint, true);
   assert.equal(toolDefinitions().find(({ name }) => name.endsWith("get_budget")).untrustedContentHint, false);
 });
@@ -134,6 +138,20 @@ test("returns compact version 1 projections with current revisions", async () =>
   assert.deepEqual(summary.data.revisions, { encounter_revision: 4, constraints_revision: 2 });
   const budget = await adapter.execute("sidekickdm_get_budget");
   assert.equal(budget.data.construction_budget, 150);
+  assert.deepEqual(budget.data.phase_budget.per_phase, []);
+});
+
+test("projects phase budgets and nested XP categories in the read budget", async () => {
+  const adapter = createWebMCPAdapter({ snapshot: snapshot({ phaseBudget: {
+    perPhase: [{ phaseID: "phase_1", title: "Bell cracks", participantIDs: ["cmp_1"], hazardIDs: [], activeXP: 40, terrainAdjustment: 2, participation: { mandatoryXP: 40, avoidableXP: 0, conditionalXP: 0, reinforcementXP: 0 } }],
+    guaranteedXP: 40, avoidableXP: 0, conditionalXP: 0, reinforcementXP: 0, peakActiveXP: 40, totalEncounterXP: 40, terrainAdjustment: 2, overlapWarnings: []
+  }}) });
+  const budget = await adapter.execute("sidekickdm_get_budget");
+  assert.deepEqual(budget.data.phase_budget.per_phase[0], {
+    phase_id: "phase_1", title: "Bell cracks", participant_ids: ["cmp_1"], hazard_ids: [], active_xp: 40,
+    terrain_adjustment: 2, participation: { mandatory_xp: 40, avoidable_xp: 0, conditional_xp: 0, reinforcement_xp: 0 }
+  });
+  assert.equal(budget.data.phase_budget.guaranteed_xp, 40);
 });
 
 test("keeps catalog reads compact, detailed, and untrusted through tool hints", async () => {
@@ -174,6 +192,30 @@ test("feature detection and registration are idempotent per model context", asyn
   assert.equal(registered.length, toolDefinitions().length);
   const result = await registered[1].execute({ encounter_id: "enc_test" });
   assert.equal(result.ok, true);
+});
+
+test("registration binds tool handles and execution signals to the adapter lifecycle", async () => {
+  const registered = [];
+  const removed = [];
+  const owner = {
+    listeners: new Map(),
+    addEventListener(name, handler) { this.listeners.set(name, handler); },
+    removeEventListener(name) { this.listeners.delete(name); }
+  };
+  const modelContext = {
+    async registerTool(definition) {
+      registered.push(definition);
+      return { unregister: async () => removed.push(definition.name) };
+    }
+  };
+  const adapter = createWebMCPAdapter({ snapshot: snapshot(), catalog: new CatalogIndex(catalogFixture), modelContext, registrationOwner: owner });
+  await adapter.register();
+  assert.ok(registered.every(definition => definition.signal instanceof AbortSignal));
+  assert.ok(owner.listeners.has("pagehide"));
+  await adapter.unregister();
+  assert.equal(removed.length, toolDefinitions().length);
+  assert.equal(owner.listeners.size, 0);
+  assert.deepEqual(await adapter.unregister(), { available: false, label: "WebMCP not registered" });
 });
 
 test("write tools route semantic commands through the shared engine and persist the resulting snapshot", async () => {

@@ -88,4 +88,24 @@ final class HazardBuilderTests: XCTestCase {
         XCTAssertEqual(store.draft.revision, 1)
         XCTAssertEqual(store.draft.hazards.count, 1)
     }
+
+    func testSharedCommandHazardLifecycleKeepsProvenanceAndRemovesEmbeddedSnapshot() throws {
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: JSONEncoder().encode(validHazard())) as? [String: Any])
+        let store = EncounterStore(draft: EncounterDraft(brief: EncounterBrief(party: PartySnapshot(effectiveLevel: 4, size: 4))))
+        try SidekickCommandExecutor.execute(["command": "sidekickdm_create_simple_hazard", "hazard": payload, "participation_mode": "mandatory", "placement": "Shrine entrance", "expected_revision": 0, "origin": "webmcp"], in: store)
+        XCTAssertEqual(store.draft.customHazards?.first?.provenance.origin, "original")
+        XCTAssertEqual(store.draft.customHazards?.first?.provenance.mutationOrigin, "webmcp")
+
+        var revised = validHazard()
+        revised.identity.name = "Revised Mire Bell Snare"
+        let revisedPayload = try XCTUnwrap(try JSONSerialization.jsonObject(with: JSONEncoder().encode(revised)) as? [String: Any])
+        try SidekickCommandExecutor.execute(["command": "sidekickdm_update_hazard", "hazard": revisedPayload, "participation_mode": "avoidable", "placement": "West arch", "expected_revision": 1, "origin": "webmcp"], in: store)
+        XCTAssertEqual(store.draft.customHazards?.first?.identity.name, "Revised Mire Bell Snare")
+        XCTAssertEqual(store.draft.customHazards?.first?.provenance.mutationOrigin, "webmcp")
+        XCTAssertEqual(store.draft.hazards.first?.placement, "West arch")
+
+        try SidekickCommandExecutor.execute(["command": "sidekickdm_remove_component", "component_id": "haz_1", "expected_revision": 2, "origin": "webmcp"], in: store)
+        XCTAssertTrue(store.draft.hazards.isEmpty)
+        XCTAssertTrue(store.draft.customHazards?.isEmpty ?? true)
+    }
 }

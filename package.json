@@ -8,9 +8,9 @@
     "node": "24.19.0"
   },
   "scripts": {
-    "build:native": "node scripts/build-native.mjs",
+    "build:native": "npm run bootstrap && node scripts/build-native.mjs",
     "bootstrap": "node scripts/bootstrap.mjs",
-    "build": "node scripts/build.mjs",
+    "build": "npm run bootstrap && node scripts/build.mjs",
     "verify:native": "node scripts/verify-native.mjs",
     "verify:browser": "node scripts/verify-browser-source.mjs",
     "verify:webmcp": "node scripts/verify-webmcp.mjs",

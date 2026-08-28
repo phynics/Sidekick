@@ -59,6 +59,18 @@ test("import remaps collisions, references, and records provenance", () => {
   assert.equal(result.draft.revision, 0);
 });
 
+test("Catalog snapshots stay self-contained without becoming Original Creature drafts", () => {
+  const encounter = fixture();
+  encounter.participantGroups = [{ id: "cmp_catalog", contentID: "creature/monster-core/bog-strider/current", name: "Bog Strider", level: 5, quantity: 1 }];
+  encounter.phases = [];
+  encounter.originalCreatures = [];
+  const catalogSnapshot = { id: "catalog_snapshot_cmp_catalog", contentID: "creature/monster-core/bog-strider/current", kind: "creature", name: "Bog Strider", level: 5, detail: { speeds: { land: 25 } }, provenance: { origin: "existing" } };
+  const result = importEncounterFile(createEncounterFile({ encounter, components: { creatures: [catalogSnapshot] } }));
+  assert.deepEqual(result.draft.originalCreatures, []);
+  assert.equal(result.draft.embeddedCatalogEntries[0].contentID, "creature/monster-core/bog-strider/current");
+  assert.equal(result.components.creatures[0].provenance.origin, "imported");
+});
+
 test("future major versions are rejected before memory-store writes", () => {
   const root = JSON.parse(createEncounterFile({ encounter: fixture() }));
   root.format_version = 2;

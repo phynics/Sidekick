@@ -138,3 +138,13 @@ test("original components remain printable without inventing catalog provenance"
   assert.equal(projection.notices.catalogProvenance.length, 0);
   assert.match(renderEncounterPrintProjection(projection), /No embedded catalog provenance recorded/);
 });
+
+test("restored embedded Catalog snapshots print without a runtime Catalog", () => {
+  const entry = { ...catalog.entries[0], id: "catalog_snapshot_cmp_bog", contentID: catalog.entries[0].content_id, snapshotKind: "catalog" };
+  const projection = createEncounterPrintProjection({
+    encounter: restoredExport().data.encounter,
+    embeddedComponents: { creatures: [entry], npcProfiles: [], hazards: [] }
+  });
+  assert.equal(projection.componentMechanics.participants[0].mechanics.defenses.ac, 24);
+  assert.equal(projection.notices.catalogProvenance[0].contentID, catalog.entries[0].content_id);
+});

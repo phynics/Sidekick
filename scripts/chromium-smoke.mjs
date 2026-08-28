@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { rmSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { rmSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, resolve, relative, isAbsolute, extname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,8 +46,9 @@ if (browserVersion.status !== 0 || !browserVersion.stdout.includes(toolchain.chr
 }
 
 const userData = mkdtempSync(join(tmpdir(), "sidekick-chromium-"));
+const transferData = mkdtempSync(join(tmpdir(), "sidekick-acceptance-transfer-"));
 const debugPort = await freePort();
-const browser = spawn(chrome, ["--headless=new", "--no-sandbox", "--disable-gpu", "--no-first-run", "--no-default-browser-check", `--user-data-dir=${userData}`, `--remote-debugging-port=${debugPort}`, pageURL], { stdio: "ignore" });
+const browser = spawn(chrome, ["--headless=new", "--no-sandbox", "--disable-gpu", "--no-first-run", "--no-default-browser-check", `--user-data-dir=${userData}`, `--remote-debugging-port=${debugPort}`, "about:blank"], { stdio: "ignore" });
 let socket;
 try {
   const target = await waitForTarget(debugPort);
@@ -69,24 +70,35 @@ try {
   const evaluate = (expression) => command("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }).then((result) => result?.result?.value);
   await command("Page.enable");
   await command("Runtime.enable");
+  await command("DOM.enable");
   const networkRequests = new Set();
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(event.data);
     if (message.method === "Network.requestWillBeSent" && message.params?.request?.url) networkRequests.add(message.params.request.url);
   });
   await command("Network.enable");
+  await command("Page.navigate", { url: pageURL });
+  const setFileInput = async (selector, path) => {
+    const document = await command("DOM.getDocument", { depth: -1 });
+    const node = await command("DOM.querySelector", { nodeId: document.root.nodeId, selector });
+    if (!node.nodeId) throw new Error(`File input ${selector} was not found.`);
+    await command("DOM.setFileInputFiles", { nodeId: node.nodeId, files: [path] });
+  };
 
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=swift-value]')?.textContent.trim()"), "7");
   const initial = await evaluate("({ value: document.querySelector('[data-testid=swift-value]').textContent.trim(), budget: document.querySelector('[data-testid=construction-budget]').textContent.trim(), asset: document.querySelector('[data-testid=asset-status]').textContent.trim(), bridge: document.querySelector('[data-testid=bridge-status]').textContent.trim() })");
   if (initial.value !== "7" || initial.budget !== "80 XP" || !initial.asset.includes("Static Encounter Brief")) throw new Error("Chromium did not render the initial Swift value, budget, and JSON asset.");
   const webMCPBudget = await evaluate("globalThis.sidekickDM.webMCP.execute('sidekickdm_get_budget')");
   if (!webMCPBudget?.ok || webMCPBudget.data.construction_budget !== 80) throw new Error("The read-only WebMCP adapter did not expose the current Wasm budget.");
+  await evaluate("document.querySelector('[data-action=new-encounter]').click()");
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=notice]')?.textContent.trim()"), "New Encounter Draft created");
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=construction-budget]')?.textContent.trim()"), "80 XP");
   await evaluate("document.querySelector('[data-action=increment]').click()");
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=swift-value]')?.textContent.trim()"), "8");
   const updated = await evaluate("({ value: document.querySelector('[data-testid=swift-value]').textContent.trim(), bridge: document.querySelector('[data-testid=bridge-status]').textContent.trim() })");
   if (updated.value !== "8" || !updated.bridge.includes("JavaScript bridge received Swift value 8")) throw new Error("Chromium did not render the changed Swift state and bridge result.");
   await evaluate("document.querySelector('[data-testid=party-level]').value = '5'; document.querySelector('[data-testid=party-level]').dispatchEvent(new Event('change', { bubbles: true }))");
-  await waitFor(async () => await evaluate("document.querySelector('[data-testid=encounter-revision]').textContent.trim()"), "2");
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=encounter-revision]').textContent.trim()"), "3");
   await evaluate("document.querySelector('[data-testid=party-size]').value = '5'; document.querySelector('[data-testid=party-size]').dispatchEvent(new Event('change', { bubbles: true }))");
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=construction-budget]').textContent.trim()"), "100 XP");
   await evaluate("document.querySelector('[data-testid=threat-target]').value = 'severe'; document.querySelector('[data-testid=threat-target]').dispatchEvent(new Event('change', { bubbles: true }))");
@@ -112,46 +124,90 @@ try {
   await command("Page.reload");
   await waitFor(async () => await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.participantGroups.some(group => group.contentID === 'creature/monster-core/orc-veteran/current')"), true);
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "95 XP");
-  await evaluate(`(async () => { const values = { name: "Mire Scout", concept: "A shrine guardian", roadmap: "skirmisher", traits: "humanoid", languages: "Common", perception: "9", ac: "18", fortitude: "9", reflex: "12", will: "9", hp: "45", speed: "25", strikeName: "Spear", strikeAttack: "12", strikeDamage: "1d8+4", tactics: "Flank intruders.", morale: "Withdraw when bloodied." }; for (const [key, value] of Object.entries(values)) { const field = document.querySelector('#creature-builder-root [data-field="' + key + '"]'); field.value = value; field.dispatchEvent(new Event('change', { bubbles: true })); await new Promise(requestAnimationFrame); } })()`);
-  await waitFor(async () => await evaluate("document.querySelector('#creature-builder-root [data-action=add]')?.disabled"), false).catch(async error => {
-    const state = await evaluate("({ disabled: document.querySelector('#creature-builder-root [data-action=add]')?.disabled, readiness: document.querySelector('[data-testid=creature-readiness]')?.textContent, errors: [...document.querySelectorAll('#creature-builder-root [data-kind]')].map(item => item.textContent), fields: [...document.querySelectorAll('#creature-builder-root [data-field]')].map(item => [item.dataset.field, item.value]) })");
-    throw new Error(`${error.message} Creature state: ${JSON.stringify(state)}`);
-  });
+  await evaluate(`(async () => { const values = { name: "Mire Scout", level: "5", concept: "A shrine guardian", roadmap: "skirmisher", traits: "humanoid", languages: "Common", perception: "21", ac: "20", fortitude: "11", reflex: "14", will: "11", hp: "75", speed: "25", strikeName: "Spear", strikeAttack: "15", strikeDamage: "1d8+4", tactics: "Flank intruders.", morale: "Withdraw when bloodied." }; for (const [key, value] of Object.entries(values)) { const field = document.querySelector('#creature-builder-root [data-field="' + key + '"]'); field.value = value; field.dispatchEvent(new Event('change', { bubbles: true })); await new Promise(requestAnimationFrame); } })()`);
+  await waitFor(async () => await evaluate("document.querySelector('#creature-builder-root [data-action=add]')?.disabled"), false);
   await evaluate("document.querySelector('#creature-builder-root [data-action=add]').click()");
   const originalParticipantID = await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.participantGroups.at(-1).id");
   await waitFor(async () => await evaluate(`document.querySelector('[data-testid=participant-${originalParticipantID}]')?.textContent.includes('Mire Scout')`), true);
-  await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "110 XP");
-  await evaluate(`(async () => { const values = { name: "Mire Bell Snare", traits: "mechanical", description: "A submerged chain catches trespassers.", detection: "18", disableMethods: "Thievery|17", trigger: "A creature crosses the chain.", effect: "The chain knocks the creature prone.", reset: "Reset the chain in ten minutes." }; for (const [key, value] of Object.entries(values)) { const field = document.querySelector('#hazard-builder-root [data-field="' + key + '"]'); field.value = value; field.dispatchEvent(new Event('change', { bubbles: true })); await new Promise(requestAnimationFrame); } })()`);
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "135 XP");
+  await evaluate(`(async () => { const values = { name: "Mire Bell Snare", traits: "mechanical", description: "A submerged chain catches trespassers.", detection: "18", disableMethods: "Thievery|17", trigger: "A creature crosses the chain.", effect: "The chain knocks the creature prone.", reset: "Reset the chain in ten minutes.", participation: "conditional", participationCondition: "When the bell tolls." }; for (const [key, value] of Object.entries(values)) { const field = document.querySelector('#hazard-builder-root [data-field="' + key + '"]'); field.value = value; field.dispatchEvent(new Event('change', { bubbles: true })); await new Promise(requestAnimationFrame); } })()`);
   await waitFor(async () => await evaluate("document.querySelector('#hazard-builder-root [data-action=add]')?.disabled"), false);
   await evaluate("document.querySelector('#hazard-builder-root [data-action=add]').click()");
   await waitFor(async () => await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.hazards.length"), 1);
-  await waitFor(async () => await evaluate("document.querySelector('[data-testid=avoidable-xp]').textContent.trim()"), "2 XP");
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=conditional-xp]').textContent.trim()"), "2 XP");
   const npcValues = { encounterPurpose: "Protect the drowned shrine.", immediateGoal: "Drive intruders away from the bell.", moraleExit: "Flee when the captain falls." };
   await evaluate(`(() => { const form = document.querySelector('[data-npc-profile-form]'); const values = ${JSON.stringify(npcValues)}; for (const [name, value] of Object.entries(values)) form.elements[name].value = value; form.requestSubmit(); return true; })()`);
   await waitFor(async () => await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.npcProfiles?.length"), 1);
   const phaseHazardID = await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.hazards[0].id");
   const phaseValues = { title: "The Bell Rings", triggerExplanation: "When the shrine bell is struck.", participantIDs: originalParticipantID, hazardIDs: phaseHazardID, terrainChanges: "Floodwater rises around the bell.", runningGuidance: "Push isolated targets toward the flooded floor." };
-  await evaluate(`(() => { const form = document.querySelector('[data-phase-form]'); const values = ${JSON.stringify(phaseValues)}; for (const [name, value] of Object.entries(values)) form.elements[name].value = value; form.requestSubmit(); return true; })()`);
+  await evaluate(`(async () => { const values = ${JSON.stringify(phaseValues)}; for (const [name, value] of Object.entries(values)) { const field = document.querySelector('[data-phase-form] [name="' + name + '"]'); field.value = value; field.dispatchEvent(new Event('change', { bubbles: true })); await new Promise(requestAnimationFrame); } document.querySelector('[data-phase-form]').requestSubmit(); return true; })()`);
+  await waitFor(async () => await evaluate("document.querySelector('[data-phase-form] button[type=submit]')?.disabled"), false);
   await waitFor(async () => await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.phases?.length"), 1);
+  const phaseTwoParticipantIDs = await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.participantGroups.filter(group => ['Fixture Creature', 'Orc Veteran'].includes(group.name)).map(group => group.id).join(', ')");
+  await evaluate("document.querySelector('[data-action=new-phase]').click()");
+  await waitFor(async () => await evaluate("document.querySelector('[data-phase-form] [name=title]')?.value"), "");
+  const phaseTwoValues = { title: "The Flood Rises", triggerKind: "round", triggerExplanation: "At the start of the third round.", participantIDs: phaseTwoParticipantIDs, hazardIDs: "", terrainChanges: "The eastern walkway collapses.", runningGuidance: "The sentries hold the walkway while the veteran presses the bell." };
+  await evaluate(`(async () => { const values = ${JSON.stringify(phaseTwoValues)}; for (const [name, value] of Object.entries(values)) { const field = document.querySelector('[data-phase-form] [name="' + name + '"]'); field.value = value; field.dispatchEvent(new Event('change', { bubbles: true })); await new Promise(requestAnimationFrame); } document.querySelector('[data-phase-form]').requestSubmit(); return true; })()`);
+  await waitFor(async () => await evaluate("document.querySelector('[data-phase-form] button[type=submit]')?.disabled"), false);
+  await waitFor(async () => await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.phases?.length"), 2);
+  await waitFor(async () => await evaluate("(globalThis.sidekickDM.engine.snapshot.phaseBudget ?? globalThis.sidekickDM.engine.snapshot.phase_budget)?.perPhase?.length"), 2);
+  const phaseBudget = await evaluate("(() => { const value = globalThis.sidekickDM.engine.snapshot.phaseBudget ?? globalThis.sidekickDM.engine.snapshot.phase_budget ?? {}; return { peak: value.peakActiveXP ?? value.peak_active_xp, total: value.totalEncounterXP ?? value.total_encounter_xp }; })()");
+  if (phaseBudget.peak !== 95 || phaseBudget.total !== 137) throw new Error(`Phase budget projection was not authoritative: ${JSON.stringify(phaseBudget)}`);
   const packetSections = [
     ["identity", { title: "The Bell Beneath Blackwater", premise: "A drowned cult guards the shrine bell.", objective: "Stop the bell before it calls the flood.", stakes: "The lower district floods if the bell rings." }],
     ["setup", { trigger: "The bell tolls when the party enters.", battlefieldDescription: "A flooded shrine with raised walkways.", startingPositions: "The defenders begin beside the eastern pool.", awarenessState: "The sentries are alert.", immediateFeatures: "Knee-deep water\nA cracked bell rope" }],
     ["running_guidance", { participantRoles: "Sentries screen the captain.", openingTactics: "Delay while the captain reaches the bell.", ongoingTactics: "Push isolated targets toward the water.", coordinationConflict: "Sentries retreat if the captain falls.", triggersReinforcements: "A second wave arrives when the bell is struck.", moraleSummary: "The cultists flee when the captain falls." }],
-    ["cohesion", { participantPresence: "The cult is protecting its shrine.", relationships: "The captain rules the sentries through fear.", hazardTerrainFit: "The flooded floor hides the snare." }],
+    ["cohesion", { participantPresence: "The cult is protecting its shrine.", relationships: "The captain rules the sentries through fear.", hazardTerrainFit: "The flooded floor hides the snare.", theme: "Drowning pressure and divided loyalty." }],
     ["outcomes", { victory: "The party silences the bell.", failure: "The flood reaches the lower district." }]
   ];
   for (const [section, values] of packetSections) {
     const beforeRevision = await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.revision");
-    await evaluate(`(() => { const form = document.querySelector('[data-packet-form="${section}"]'); const values = ${JSON.stringify(values)}; for (const [name, value] of Object.entries(values)) form.elements[name].value = value; form.requestSubmit(); return true; })()`);
+    const packetSubmit = await evaluate(`(() => { const form = document.querySelector('[data-packet-form="${section}"]'); const values = ${JSON.stringify(values)}; for (const [name, value] of Object.entries(values)) form.elements[name].value = value; form.requestSubmit(); return { found: Boolean(form), submitted: true, revision: globalThis.sidekickDM.engine.snapshot.encounter.revision, notice: document.querySelector('[data-testid=notice]')?.textContent }; })()`);
+    if (!packetSubmit?.submitted || packetSubmit.revision !== beforeRevision + 1) throw new Error(`Packet ${section} submit failed: ${JSON.stringify(packetSubmit)} (expected revision ${beforeRevision + 1})`);
     await waitFor(async () => await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.revision"), beforeRevision + 1);
   }
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=readiness]').textContent.trim()"), "ready_with_warnings");
   const exported = await evaluate("(() => { const raw = globalThis.sidekickDM.actions.exportEncounter(); const print = globalThis.sidekickDM.actions.printEncounter(); return { raw, print }; })()");
   const exportedRoot = JSON.parse(exported.raw);
   const exportedEncounter = exportedRoot.data?.encounter;
-  if (exportedRoot.format !== "sidekickdm" || exportedEncounter?.participant_groups?.length < 3 || exportedEncounter?.hazards?.length !== 1 || exportedEncounter?.phases?.length !== 1 || exportedRoot.data?.embedded_components?.npc_profiles?.length !== 1) throw new Error("Manual acceptance export did not include the complete P0 Encounter.");
+  if (exportedRoot.format !== "sidekickdm" || exportedEncounter?.participant_groups?.length < 3 || exportedEncounter?.hazards?.length !== 1 || exportedEncounter?.phases?.length !== 2 || exportedRoot.data?.embedded_components?.npc_profiles?.length !== 1) throw new Error("Manual acceptance export did not include the complete P0 Encounter.");
   if (exportedEncounter.budget !== undefined || exportedEncounter.readiness !== undefined) throw new Error("Encounter export leaked derived budget or readiness values.");
   if (!exported.print.includes("Component mechanics") || !exported.print.includes("Notices and provenance")) throw new Error("Manual acceptance print projection is missing runnable sections or rights notices.");
+  const portableRoot = structuredClone(exportedRoot);
+  const placedHazardIDs = new Set((portableRoot.data.encounter.hazards ?? []).map(hazard => hazard.id));
+  portableRoot.data.embedded_components.hazards = (portableRoot.data.embedded_components.hazards ?? []).filter(hazard => !placedHazardIDs.has(hazard.id));
+  const portableRaw = JSON.stringify(portableRoot);
+  const selfContainedImport = await evaluate(`(async () => { const { importEncounterFile } = await import("./src/encounter-file.js"); const imported = importEncounterFile(${JSON.stringify(portableRaw)}, { existingIDs: [] }); return { groups: imported.draft.participantGroups?.length, hazards: imported.draft.hazards?.length, phases: imported.draft.phases?.length, creatures: imported.components.creatures?.length, npcProfiles: imported.components.npcProfiles?.length, customHazards: imported.draft.customHazards?.length }; })()`);
+  if (selfContainedImport?.groups !== 3 || selfContainedImport?.hazards !== 1 || selfContainedImport?.phases !== 2 || selfContainedImport?.creatures !== 2 || selfContainedImport?.npcProfiles !== 1 || selfContainedImport?.customHazards !== 1) throw new Error(`Self-contained Encounter import was incomplete: ${JSON.stringify(selfContainedImport)}`);
+  const encounterPath = join(transferData, "encounter.sidekickdm.json");
+  writeFileSync(encounterPath, portableRaw, "utf8");
+  const importEngineCheck = await evaluate(`(async () => { const { importEncounterFile } = await import("./src/encounter-file.js"); const imported = importEncounterFile(${JSON.stringify(portableRaw)}, { existingIDs: [] }); return globalThis.sidekickDM.engine.execute({ command: "sidekick_load_draft", draft_json: JSON.stringify(imported.draft), origin: "acceptance-check" }); })()`);
+  if (!importEngineCheck?.ok) throw new Error(`Portable import could not reload into the engine: ${JSON.stringify(importEngineCheck)}`);
+  await setFileInput('[data-action="import-encounter"]', encounterPath);
+  await waitFor(async () => (await evaluate("document.querySelector('[data-testid=notice]')?.textContent.trim()"))?.startsWith("Encounter imported"), true).catch(async error => { throw new Error(`${error.message} Notice: ${await evaluate("document.querySelector('[data-testid=notice]')?.textContent.trim()")}`); });
+  await evaluate("document.querySelector('[data-action=import-encounter]').value = ''");
+  await setFileInput('[data-action="import-encounter"]', encounterPath);
+  await waitFor(async () => (await evaluate("document.querySelector('[data-testid=notice]')?.textContent.trim()"))?.startsWith("Encounter imported with"), true).catch(async error => { throw new Error(`${error.message} Notice: ${await evaluate("document.querySelector('[data-testid=notice]')?.textContent.trim()")}`); });
+  await waitFor(async () => await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.participantGroups?.length"), 3);
+  await waitFor(async () => await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.hazards?.length"), 1);
+  await waitFor(async () => await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.phases?.length"), 2);
+  const uiPrintOpened = await evaluate("(() => { const previous = globalThis.open; let opened = false; globalThis.open = () => ({ addEventListener() { opened = true; } }); document.querySelector('[data-action=print-encounter]').click(); globalThis.open = previous; return opened; })()");
+  if (!uiPrintOpened) throw new Error("Print Packet control did not open a print projection.");
+  const componentsRaw = await evaluate(`(async () => { const { createComponentsFile } = await import("./src/encounter-file.js"); const draft = globalThis.sidekickDM.engine.snapshot.encounter; return createComponentsFile({ components: { creatures: draft.originalCreatures ?? [], npcProfiles: draft.npcProfiles ?? [], hazards: draft.customHazards ?? [] } }); })()`);
+  const componentsPath = join(transferData, "components.sidekickdm.json");
+  writeFileSync(componentsPath, componentsRaw, "utf8");
+  await setFileInput('[data-action="import-components"]', componentsPath);
+  await waitFor(async () => (await evaluate("document.querySelector('[data-testid=notice]')?.textContent.trim()"))?.startsWith("Components imported"), true);
+  await evaluate("document.querySelector('[data-action=import-components]').value = ''");
+  await setFileInput('[data-action="import-components"]', componentsPath);
+  await waitFor(async () => (await evaluate("document.querySelector('[data-testid=notice]')?.textContent.trim()"))?.includes("remapped ID(s)"), true);
+  const libraryRaw = await evaluate(`(async () => { const { createLibraryFile } = await import("./src/encounter-file.js"); const draft = globalThis.sidekickDM.engine.snapshot.encounter; return createLibraryFile({ library: { encounters: [draft], creatures: draft.originalCreatures ?? [], npcProfiles: draft.npcProfiles ?? [], hazards: draft.customHazards ?? [] } }); })()`);
+  const libraryPath = join(transferData, "library.sidekickdm.json");
+  writeFileSync(libraryPath, libraryRaw, "utf8");
+  await setFileInput('[data-action="import-library"]', libraryPath);
+  await waitFor(async () => (await evaluate("document.querySelector('[data-testid=notice]')?.textContent.trim()"))?.startsWith("Library imported"), true);
+  const transferredCounts = await evaluate(`(async () => { const db = await new Promise((resolve, reject) => { const request = indexedDB.open("sidekick-dm", 2); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); const names = ["encounters", "creatures", "npc_profiles", "hazards"]; const counts = {}; const tx = db.transaction(names, "readonly"); await Promise.all(names.map(name => new Promise((resolve, reject) => { const request = tx.objectStore(name).count(); request.onsuccess = () => { counts[name] = request.result; resolve(); }; request.onerror = () => reject(request.error); }))); return counts; })()`);
+  if ((transferredCounts?.creatures ?? 0) < 1 || (transferredCounts?.npc_profiles ?? 0) < 1 || (transferredCounts?.hazards ?? 0) < 1 || (transferredCounts?.encounters ?? 0) < 1) throw new Error(`Component/library transfer did not persist records: ${JSON.stringify(transferredCounts)}`);
 
   const generationStart = await evaluate(`(async () => {
     const snapshot = globalThis.sidekickDM.engine.snapshot;
@@ -210,6 +266,7 @@ try {
   await waitForExit(browser, 3_000);
   server.close();
   rmSync(userData, { recursive: true, force: true });
+  rmSync(transferData, { recursive: true, force: true });
 }
 
 async function freePort() {
@@ -233,12 +290,14 @@ async function waitForTarget(port) {
 
 async function waitFor(read, expected = undefined) {
   const deadline = Date.now() + 15_000;
+  let lastValue;
   while (Date.now() < deadline) {
     const value = await read();
+    lastValue = value;
     if (expected === undefined ? value : value === expected) return value;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`Timed out waiting for ${expected ?? "the browser target"}.`);
+  throw new Error(`Timed out waiting for ${expected ?? "the browser target"}; last value was ${JSON.stringify(lastValue)}.`);
 }
 
 function withTimeout(promise, timeout, label) {

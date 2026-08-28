@@ -102,17 +102,20 @@ assert.equal(catalog.addExistingCreatureCommand("hazard/gm-core/electric-latch-r
 assert.deepEqual(catalog.search({ kind: "creature", level_min: 1, level_max: 4, traits: ["humanoid"], environments: ["underground"], roles: ["defender"], limit: 50 }).results.map(({ name }) => name), ["Orc Veteran"]);
 assert.equal(catalog.get("creature/monster-core/flame-drake/current").detail.strikes.length, 2, "full Creature details must remain available for inspection");
 
-const temp = await mkdtemp(join(tmpdir(), "sidekick-catalog-"));
-try {
-  const regenerated = join(temp, "catalog.json");
-  const regeneratedManifest = join(temp, "manifest.json");
-  const regeneratedNotice = join(temp, "NOTICE.txt");
-  const result = spawnSync(process.execPath, [join(root, "scripts/generate-catalog.mjs"), "--output", regenerated, "--manifest", regeneratedManifest, "--notice", regeneratedNotice], { cwd: root, encoding: "utf8" });
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(readFileSync(regenerated), readFileSync(fixturePath), "catalog generation is not byte deterministic");
-  assert.deepEqual(readFileSync(regeneratedManifest), readFileSync(manifestPath), "catalog manifest generation is not byte deterministic");
-  assert.deepEqual(readFileSync(regeneratedNotice), readFileSync(noticePath), "NOTICE.txt generation is not byte deterministic");
-} finally {
-  await rm(temp, { recursive: true, force: true });
+const artifactOnly = process.argv.includes("--artifact-only");
+if (!artifactOnly) {
+  const temp = await mkdtemp(join(tmpdir(), "sidekick-catalog-"));
+  try {
+    const regenerated = join(temp, "catalog.json");
+    const regeneratedManifest = join(temp, "manifest.json");
+    const regeneratedNotice = join(temp, "NOTICE.txt");
+    const result = spawnSync(process.execPath, [join(root, "scripts/generate-catalog.mjs"), "--output", regenerated, "--manifest", regeneratedManifest, "--notice", regeneratedNotice], { cwd: root, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(readFileSync(regenerated), readFileSync(fixturePath), "catalog generation is not byte deterministic");
+    assert.deepEqual(readFileSync(regeneratedManifest), readFileSync(manifestPath), "catalog manifest generation is not byte deterministic");
+    assert.deepEqual(readFileSync(regeneratedNotice), readFileSync(noticePath), "NOTICE.txt generation is not byte deterministic");
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
 }
-console.log(`Catalog verification passed: ${fixture.entries.length} deterministic entries, bounded search, provenance, safe text, and add-existing command contract.`);
+console.log(`Catalog ${artifactOnly ? "artifact" : "generation"} verification passed: ${fixture.entries.length} entries, bounded search, provenance, safe text, and add-existing command contract.`);

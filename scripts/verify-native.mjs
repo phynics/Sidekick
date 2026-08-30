@@ -4,17 +4,21 @@ import { resolve } from "node:path";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const wasmBytes = readFileSync(resolve(root, "public/wasm/sidekick-engine.wasm"));
+const manifest = JSON.parse(readFileSync(resolve(root, "public/wasm/sidekick-engine.manifest.json"), "utf8"));
 const module = new WebAssembly.Module(wasmBytes);
 const exports = new Set(WebAssembly.Module.exports(module).map(({ name }) => name));
-for (const name of ["memory", "_start", "sidekickdm_protocol_version", "sidekickdm_alloc", "sidekickdm_dealloc", "sidekickdm_initialize", "sidekickdm_execute", "sidekickdm_result_ptr", "sidekickdm_result_len", "sidekickdm_result_copy"]) {
+for (const name of ["memory", "_start", "sidekickdm_protocol_version", "sidekickdm_alloc", "sidekickdm_dealloc", "sidekickdm_initialize", "sidekickdm_execute", "sidekickdm_result_ptr", "sidekickdm_result_len", "sidekickdm_result_copy", "sidekickdm_engine_capabilities"]) {
   if (!exports.has(name)) throw new Error(`Native engine export missing: ${name}`);
 }
 const originalFetch = globalThis.fetch;
-globalThis.fetch = async () => new Response(wasmBytes, { status: 200 });
+globalThis.fetch = async url => String(url).includes("manifest")
+  ? new Response(JSON.stringify(manifest), { status: 200, headers: { "content-type": "application/json" } })
+  : new Response(wasmBytes, { status: 200 });
 try {
   const { loadSidekickEngine } = await import("../src/wasm-engine.js");
   const engine = await loadSidekickEngine({ url: "./public/wasm/sidekick-engine.wasm" });
   if (!engine.available || engine.snapshot.engine !== "SidekickDMCore") throw new Error("Sidekick DM engine did not initialize from the Wasm artifact.");
+  if (engine.compatibility !== "compatible" || !engine.capabilities?.supportedCommands.includes("sidekickdm_apply_generation_step")) throw new Error("The native engine capability handshake is incomplete.");
   let result = engine.execute({ command: "sidekick_increment", expected_revision: 0 });
   if (!result.ok || result.snapshot.draft.swiftOwnedValue !== 8 || result.snapshot.draft.revision !== 1) throw new Error("Swift-owned state did not change through the command ABI.");
   result = engine.execute({ command: "sidekickdm_set_party_snapshot", effective_level: 5, size: 5, expected_revision: 1 });

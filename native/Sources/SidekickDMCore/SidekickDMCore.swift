@@ -14,8 +14,8 @@ public enum HazardComplexity: String, Codable, CaseIterable, Sendable { case sim
 public struct Participation: Codable, Equatable, Sendable { public var mode: ParticipationMode; public var condition: String?; public init(mode: ParticipationMode = .mandatory, condition: String? = nil) { self.mode = mode; self.condition = condition } }
 
 public struct ParticipantGroup: Codable, Equatable, Sendable {
-    public var id: String; public var contentID: String; public var name: String; public var level: Int; public var quantity: Int; public var adjustment: CreatureAdjustment; public var faction: Faction; public var participation: Participation; public var encounterRole: EncounterRole; public var narrativeTier: NarrativeDetailTier; public var startingArea: String; public var sharedTactics: String; public var morale: String
-    public init(id: String, contentID: String, name: String, level: Int, quantity: Int = 1, adjustment: CreatureAdjustment = .normal, faction: Faction = .primaryOpposition, participation: Participation = Participation(), encounterRole: EncounterRole = .brute, narrativeTier: NarrativeDetailTier = .incidental, startingArea: String = "", sharedTactics: String = "", morale: String = "") { self.id = id; self.contentID = contentID; self.name = name; self.level = level; self.quantity = quantity; self.adjustment = adjustment; self.faction = faction; self.participation = participation; self.encounterRole = encounterRole; self.narrativeTier = narrativeTier; self.startingArea = startingArea; self.sharedTactics = sharedTactics; self.morale = morale }
+    public var id: String; public var contentID: String; public var name: String; public var displayName: String?; public var level: Int; public var quantity: Int; public var adjustment: CreatureAdjustment; public var faction: Faction; public var participation: Participation; public var encounterRole: EncounterRole; public var narrativeTier: NarrativeDetailTier; public var startingArea: String; public var sharedTactics: String; public var morale: String
+    public init(id: String, contentID: String, name: String, displayName: String? = nil, level: Int, quantity: Int = 1, adjustment: CreatureAdjustment = .normal, faction: Faction = .primaryOpposition, participation: Participation = Participation(), encounterRole: EncounterRole = .brute, narrativeTier: NarrativeDetailTier = .incidental, startingArea: String = "", sharedTactics: String = "", morale: String = "") { self.id = id; self.contentID = contentID; self.name = name; self.displayName = displayName; self.level = level; self.quantity = quantity; self.adjustment = adjustment; self.faction = faction; self.participation = participation; self.encounterRole = encounterRole; self.narrativeTier = narrativeTier; self.startingArea = startingArea; self.sharedTactics = sharedTactics; self.morale = morale }
 }
 public struct EncounterHazard: Codable, Equatable, Sendable { public var id: String; public var contentID: String; public var name: String; public var level: Int; public var complexity: HazardComplexity; public var participation: Participation; public var placement: String; public init(id: String, contentID: String, name: String, level: Int, complexity: HazardComplexity = .simple, participation: Participation = Participation(mode: .avoidable), placement: String = "") { self.id = id; self.contentID = contentID; self.name = name; self.level = level; self.complexity = complexity; self.participation = participation; self.placement = placement } }
 public struct EncounterPhase: Codable, Equatable, Sendable { public var id: String; public var title: String; public var order: Int; public var participantIDs: [String]; public var hazardIDs: [String]; public var trigger: String; public var runningGuidance: String; public init(id: String, title: String, order: Int = 0, participantIDs: [String] = [], hazardIDs: [String] = [], trigger: String = "", runningGuidance: String = "") { self.id = id; self.title = title; self.order = order; self.participantIDs = participantIDs; self.hazardIDs = hazardIDs; self.trigger = trigger; self.runningGuidance = runningGuidance } }
@@ -30,7 +30,7 @@ public struct EncounterDraft: Codable, Equatable, Sendable {
 }
 
 public struct BudgetProjection: Codable, Equatable, Sendable { public var targetThreat: String; public var baseTargetXP: Int; public var partySizeAdjustment: Int; public var constructionBudget: Int; public var guaranteedXP: Int; public var avoidableXP: Int; public var conditionalXP: Int; public var peakActiveXP: Int; public var totalEncounterXP: Int; public var baseXPAward: Int; public var terrainAdjustment: Int; public var inferredThreat: String; public var warnings: [String] }
-public struct ReadinessProjection: Codable, Equatable, Sendable { public var structuralErrors: [String]; public var designWarnings: [String]; public var missingRequiredPacketSections: [String]; public var status: String; public init(structuralErrors: [String] = [], designWarnings: [String] = [], missingRequiredPacketSections: [String] = [], status: String = "incomplete") { self.structuralErrors = structuralErrors; self.designWarnings = designWarnings; self.missingRequiredPacketSections = missingRequiredPacketSections; self.status = status } }
+public struct ReadinessProjection: Codable, Equatable, Sendable { public var structuralErrors: [String]; public var designWarnings: [String]; public var missingRequiredPacketSections: [String]; public var status: String; public var generationStatus: String; public var structuralStatus: String; public var reviewStatus: String; public var briefPremise: String?; public var packetPremise: String?; public var displayPremise: String?; public init(structuralErrors: [String] = [], designWarnings: [String] = [], missingRequiredPacketSections: [String] = [], status: String = "incomplete", generationStatus: String = "idle", structuralStatus: String? = nil, reviewStatus: String = "needed", briefPremise: String? = nil, packetPremise: String? = nil, displayPremise: String? = nil) { self.structuralErrors = structuralErrors; self.designWarnings = designWarnings; self.missingRequiredPacketSections = missingRequiredPacketSections; self.status = status; self.generationStatus = generationStatus; self.structuralStatus = structuralStatus ?? (status == "incomplete" ? "incomplete" : "ready"); self.reviewStatus = reviewStatus; self.briefPremise = briefPremise; self.packetPremise = packetPremise; self.displayPremise = displayPremise } }
 public struct ActivityEntry: Codable, Equatable, Sendable { public var id: String; public var description: String; public var origin: String; public var beforeRevision: Int; public var afterRevision: Int; public var time: String }
 
 public struct BoundarySnapshot: Codable, Equatable, Sendable {
@@ -101,7 +101,20 @@ public final class EncounterStore: @unchecked Sendable {
             default: return section.rawValue
             }
         }
-        return ReadinessProjection(structuralErrors: errors, designWarnings: warnings, missingRequiredPacketSections: missingSections, status: errors.isEmpty ? (warnings.isEmpty ? "ready" : "ready_with_warnings") : "incomplete")
+        let briefPremise = draft.brief.premise.isEmpty ? nil : draft.brief.premise
+        let packetPremise = packetContent.identity.premise.isEmpty ? nil : packetContent.identity.premise
+        return ReadinessProjection(
+            structuralErrors: errors,
+            designWarnings: warnings,
+            missingRequiredPacketSections: missingSections,
+            status: errors.isEmpty ? (warnings.isEmpty ? "ready" : "ready_with_warnings") : "incomplete",
+            generationStatus: draft.generation?.state ?? "idle",
+            structuralStatus: draft.generation?.state == "interrupted" ? "blocked" : (errors.isEmpty ? "ready" : "incomplete"),
+            reviewStatus: draft.reviewState,
+            briefPremise: briefPremise,
+            packetPremise: packetPremise,
+            displayPremise: packetPremise ?? briefPremise
+        )
     }
     public func snapshot(error: String? = nil) -> BoundarySnapshot { BoundarySnapshot(draft: draft, budget: budget, readiness: readiness, activity: activity, canUndo: !history.isEmpty, canRedo: !redoHistory.isEmpty, error: error) }
     @discardableResult public func mutate(description: String, origin: String, expectedRevision: Int?, operation: (inout EncounterDraft) throws -> Void) throws -> Int { try check(expectedRevision); let before = draft; let wasInGeneration = before.generation != nil; var next = draft; try operation(&next); next.revision = draft.revision + 1; next.provenance.lastMutationOrigin = origin; draft = next; if !wasInGeneration { history.append(before); redoHistory.removeAll() }; record(description: description, origin: origin, before: before.revision, after: draft.revision); return draft.revision }
@@ -113,6 +126,28 @@ public final class EncounterStore: @unchecked Sendable {
 }
 
 public enum SidekickCommandExecutor {
+    /// Commands implemented by the native boundary. Keep this list next to the
+    /// dispatcher so a JavaScript adapter can refuse an incompatible engine
+    /// before registering tools.
+    public static let supportedCommands: Set<String> = [
+        "sidekick_create_encounter", "sidekick_increment", "sidekick_load_draft", "sidekick_reset",
+        "sidekickdm_create_encounter", "sidekickdm_load_draft",
+        "sidekickdm_add_hazard", "sidekickdm_add_existing_hazard", "sidekickdm_add_participant_group", "sidekickdm_add_existing_participant_group", "sidekickdm_apply_generation_step",
+        "sidekickdm_apply_targeted_revision", "sidekickdm_begin_generation", "sidekickdm_cancel_generation",
+        "sidekickdm_create_custom_creature", "sidekickdm_create_simple_hazard", "sidekickdm_finish_generation",
+        "sidekickdm_get_budget", "sidekickdm_get_encounter_summary", "sidekickdm_get_encounter_brief",
+        "sidekickdm_get_readiness", "sidekickdm_redo", "sidekickdm_remove_component", "sidekickdm_resume_generation",
+        "sidekickdm_set_alternative_resolutions", "sidekickdm_set_battlefield_guidance", "sidekickdm_set_cohesion",
+        "sidekickdm_set_encounter_identity", "sidekickdm_set_encounter_packet", "sidekickdm_set_generation_assumptions",
+        "sidekickdm_set_information_visibility", "sidekickdm_set_outcomes", "sidekickdm_set_party_snapshot", "sidekickdm_update_party_snapshot",
+        "sidekickdm_set_reward_guidance", "sidekickdm_set_running_guidance", "sidekickdm_set_setup",
+        "sidekickdm_set_threat_target", "sidekickdm_update_threat_target", "sidekickdm_undo", "sidekickdm_update_creative_brief",
+        "sidekickdm_update_creature", "sidekickdm_update_custom_creature", "sidekickdm_update_hazard", "sidekickdm_update_participant_group",
+        "sidekickdm_upsert_npc_profile", "sidekickdm_upsert_phase"
+    ]
+
+    public static let engineInterfaceVersion = 2
+
     public static func execute(_ command: [String: Any], in store: EncounterStore) throws {
         let name = (command["command"] as? String) ?? ""; let expected = try firstNumber(command, keys: ["expected_revision", "expected_encounter_revision", "expectedRevision"]); let origin = (command["origin"] as? String) ?? "gm"; let expectedBrief = try number(command, "expected_brief_revision"); let expectedConstraints = try number(command, "expected_constraints_revision")
         let isCreate = name == "sidekick_create_encounter" || name == "sidekickdm_create_encounter"
@@ -120,7 +155,7 @@ public enum SidekickCommandExecutor {
         if let expectedBrief, expectedBrief != (store.draft.briefRevision ?? 0) { throw SidekickDomainError("stale_brief_revision", "The Encounter Brief changed after it was inspected.", details: ["expected_brief_revision": "\(expectedBrief)", "current_brief_revision": "\(store.draft.briefRevision ?? 0)"]) }
         if let expectedConstraints, expectedConstraints != store.draft.constraintsRevision { throw SidekickDomainError("stale_constraints", "The Content Boundaries or Party Snapshot changed after it was inspected.", details: ["expected_constraints_revision": "\(expectedConstraints)", "current_constraints_revision": "\(store.draft.constraintsRevision)"]) }
         let reads = ["sidekickdm_get_budget", "sidekickdm_get_encounter_summary", "sidekickdm_get_encounter_brief", "sidekickdm_get_readiness"]
-        let generationOnly = Set(["sidekickdm_add_participant_group", "sidekickdm_add_existing_participant_group", "sidekickdm_update_participant_group", "sidekickdm_create_custom_creature", "sidekickdm_update_creature", "sidekickdm_update_custom_creature", "sidekickdm_upsert_npc_profile", "sidekickdm_add_hazard", "sidekickdm_add_existing_hazard", "sidekickdm_create_simple_hazard", "sidekickdm_update_hazard", "sidekickdm_remove_component", "sidekickdm_upsert_phase", "sidekickdm_set_encounter_identity", "sidekickdm_set_setup", "sidekickdm_set_battlefield_guidance", "sidekickdm_set_running_guidance", "sidekickdm_set_cohesion", "sidekickdm_set_information_visibility", "sidekickdm_set_outcomes", "sidekickdm_set_reward_guidance", "sidekickdm_set_alternative_resolutions", "sidekickdm_set_generation_assumptions", "sidekickdm_update_creative_brief", "sidekickdm_finish_generation"])
+        let generationOnly = Set(["sidekickdm_add_participant_group", "sidekickdm_add_existing_participant_group", "sidekickdm_update_participant_group", "sidekickdm_apply_generation_step", "sidekickdm_create_custom_creature", "sidekickdm_update_creature", "sidekickdm_update_custom_creature", "sidekickdm_upsert_npc_profile", "sidekickdm_add_hazard", "sidekickdm_add_existing_hazard", "sidekickdm_create_simple_hazard", "sidekickdm_update_hazard", "sidekickdm_remove_component", "sidekickdm_upsert_phase", "sidekickdm_set_encounter_identity", "sidekickdm_set_setup", "sidekickdm_set_battlefield_guidance", "sidekickdm_set_running_guidance", "sidekickdm_set_cohesion", "sidekickdm_set_information_visibility", "sidekickdm_set_outcomes", "sidekickdm_set_reward_guidance", "sidekickdm_set_alternative_resolutions", "sidekickdm_set_generation_assumptions", "sidekickdm_update_creative_brief", "sidekickdm_finish_generation"])
         let targetedForward = command["targeted_revision"] as? Bool == true
         if origin == "webmcp", generationOnly.contains(name), store.draft.generation == nil, !targetedForward {
             throw SidekickDomainError("no_active_generation", "This mutation requires an active Generation Run.")
@@ -149,7 +184,8 @@ public enum SidekickCommandExecutor {
             let level = try number(command, "effective_level") ?? partyLevel
             let size = try number(command, "size") ?? partySize
             let kindName = (command["threat_target"] as? [String: Any]).flatMap { $0["kind"] as? String } ?? (command["kind"] as? String) ?? "moderate"
-            guard let kind = ThreatTargetKind(rawValue: kindName), (1...20).contains(level), (1...8).contains(size) else { throw SidekickDomainError("invalid_party_profile", "Effective party level must be 1–20 and party size 1–8.") }
+            guard let kind = ThreatTargetKind(rawValue: kindName) else { throw invalidEnum(field: "kind", value: kindName, allowed: ThreatTargetKind.allCases.map(\.rawValue)) }
+            guard (1...20).contains(level), (1...8).contains(size) else { throw SidekickDomainError("invalid_party_profile", "Effective party level must be 1–20 and party size 1–8.") }
             let custom = try number(command, "custom_xp") ?? (try (command["threat_target"] as? [String: Any]).flatMap { try number($0, "custom_xp") })
             guard kind != .custom || (custom ?? -1) >= 0 else { throw SidekickDomainError("invalid_threat_target", "Custom Threat Target XP must be zero or greater.") }
             let title = (command["title"] as? String) ?? "Untitled Encounter"
@@ -157,7 +193,64 @@ public enum SidekickCommandExecutor {
             let brief = EncounterBrief(party: PartySnapshot(effectiveLevel: level, size: size), threatTarget: ThreatTarget(kind: kind, customXP: kind == .custom ? custom : nil))
             try store.mutate(description: "Created Encounter Draft", origin: origin, expectedRevision: expected) { $0 = EncounterDraft(id: id, title: title, brief: brief) }
         case "sidekickdm_set_party_snapshot", "sidekickdm_update_party_snapshot": let party = command["party"] as? [String: Any]; let commandLevel = try number(command, "effective_level"); let partyLevel = try party.flatMap { try number($0, "effective_level") }; let level = commandLevel ?? partyLevel ?? store.draft.brief.party.effectiveLevel; let commandSize = try number(command, "size"); let partySize = try party.flatMap { try number($0, "size") }; let size = commandSize ?? partySize ?? store.draft.brief.party.size; guard (1...20).contains(level), (1...8).contains(size) else { throw SidekickDomainError("invalid_party_profile", "Effective party level must be 1–20 and party size 1–8.") }; try store.mutate(description: "Updated Party Snapshot", origin: origin, expectedRevision: expected) { $0.brief.party.effectiveLevel = level; $0.brief.party.size = size; $0.briefRevision = ($0.briefRevision ?? 0) + 1; $0.constraintsRevision += 1 }
-        case "sidekickdm_set_threat_target", "sidekickdm_update_threat_target": let target = command["threat_target"] as? [String: Any]; let kind = ThreatTargetKind(rawValue: (command["kind"] as? String) ?? (target?["kind"] as? String) ?? "moderate") ?? .moderate; let commandCustom = try number(command, "custom_xp"); let targetCustom = try target.flatMap { try number($0, "custom_xp") }; let custom = commandCustom ?? targetCustom; guard kind != .custom || (custom ?? -1) >= 0 else { throw SidekickDomainError("invalid_threat_target", "Custom Threat Target XP must be zero or greater.") }; try store.mutate(description: "Set Threat Target to \(kind.rawValue)", origin: origin, expectedRevision: expected) { $0.brief.threatTarget = ThreatTarget(kind: kind, customXP: custom); $0.briefRevision = ($0.briefRevision ?? 0) + 1 }
+        case "sidekickdm_set_threat_target", "sidekickdm_update_threat_target":
+            let target = command["threat_target"] as? [String: Any]
+            let kindValue = (command["kind"] as? String) ?? (target?["kind"] as? String) ?? "moderate"
+            guard let kind = ThreatTargetKind(rawValue: kindValue) else { throw invalidEnum(field: "kind", value: kindValue, allowed: ThreatTargetKind.allCases.map(\.rawValue)) }
+            let commandCustom = try number(command, "custom_xp")
+            let targetCustom = try target.flatMap { try number($0, "custom_xp") }
+            let custom = commandCustom ?? targetCustom
+            guard kind != .custom || (custom ?? -1) >= 0 else { throw SidekickDomainError("invalid_threat_target", "Custom Threat Target XP must be zero or greater.") }
+            try store.mutate(description: "Set Threat Target to \(kind.rawValue)", origin: origin, expectedRevision: expected) { $0.brief.threatTarget = ThreatTarget(kind: kind, customXP: custom); $0.briefRevision = ($0.briefRevision ?? 0) + 1 }
+        case "sidekickdm_apply_generation_step":
+            let step = command["step"] as? String ?? ""
+            guard step == "composition" || step == "guidance" else { throw SidekickDomainError("invalid_request", "Generation step must be composition or guidance.", details: ["field": "step"]) }
+            if step == "composition" {
+                let rawParticipants = command["participants"] as? [[String: Any]] ?? []
+                let rawHazards = command["hazards"] as? [[String: Any]] ?? []
+                guard !rawParticipants.isEmpty || !rawHazards.isEmpty else { throw SidekickDomainError("invalid_request", "A composition step must include participants or hazards.") }
+                var groups = [ParticipantGroup](); var originals = [OriginalCreature]()
+                for item in rawParticipants {
+                    let built = try participantGroup(from: item, store: store)
+                    guard !store.draft.participantGroups.contains(where: { $0.id == built.group.id }) && !groups.contains(where: { $0.id == built.group.id }) else { throw SidekickDomainError("duplicate_component", "A composition item uses an existing component ID.", details: ["component_id": built.group.id]) }
+                    groups.append(built.group)
+                    if let original = built.original { originals.append(original) }
+                }
+                var hazards = [EncounterHazard](); var customHazards = [SimpleHazard]()
+                for item in rawHazards {
+                    let built = try encounterHazard(from: item, store: store)
+                    guard !store.draft.hazards.contains(where: { $0.id == built.hazard.id }) && !hazards.contains(where: { $0.id == built.hazard.id }) else { throw SidekickDomainError("duplicate_component", "A composition item uses an existing hazard ID.", details: ["component_id": built.hazard.id]) }
+                    hazards.append(built.hazard)
+                    if let custom = built.custom { customHazards.append(custom) }
+                }
+                try store.mutate(description: "Applied Generation composition", origin: origin, expectedRevision: expected) {
+                    $0.participantGroups.append(contentsOf: groups)
+                    $0.hazards.append(contentsOf: hazards)
+                    if !originals.isEmpty { $0.originalCreatures = ($0.originalCreatures ?? []) + originals }
+                    if !customHazards.isEmpty { $0.customHazards = ($0.customHazards ?? []) + customHazards }
+                }
+            } else {
+                guard let sections = command["sections"] as? [String: Any], !sections.isEmpty else { throw SidekickDomainError("invalid_request", "A guidance step must include at least one packet section.") }
+                var packet = store.draft.packetV1 ?? EncounterPacketContentV1(corePacket: store.draft.packet, title: store.draft.title)
+                for (section, payload) in sections {
+                    let sectionCommand: [String: Any] = ["value": payload]
+                    switch section {
+                    case "encounter_identity": packet.identity = try requiredPacketSection(PacketIdentitySection.self, command: sectionCommand)
+                    case "setup": packet.setup = try requiredPacketSection(PacketSetupSection.self, command: sectionCommand)
+                    case "battlefield_guidance": packet.battlefield = try requiredPacketSection(PacketBattlefieldSection.self, command: sectionCommand)
+                    case "running_guidance": packet.runningGuidance = try requiredPacketSection(PacketRunningGuidanceSection.self, command: sectionCommand)
+                    case "cohesion": packet.cohesion = try requiredPacketSection(PacketCohesionSection.self, command: sectionCommand)
+                    case "information_visibility": packet.information = try requiredPacketSection(PacketInformationSection.self, command: sectionCommand)
+                    case "outcomes": packet.outcomes = try requiredPacketSection(PacketOutcomesSection.self, command: sectionCommand)
+                    case "reward_guidance": packet.rewardGuidance = payload as? String
+                    case "alternative_resolutions":
+                        guard let data = try? JSONSerialization.data(withJSONObject: payload), let alternatives = try? JSONDecoder().decode([PacketAlternativeResolution].self, from: data) else { throw SidekickDomainError("invalid_packet_section", "The Alternative Resolutions payload is invalid.", details: ["field": section]) }
+                        packet.alternativeResolutions = alternatives
+                    default: throw SidekickDomainError("invalid_request", "That packet section is not supported in a generation step.", details: ["field": section])
+                    }
+                }
+                try store.mutate(description: "Applied Generation guidance", origin: origin, expectedRevision: expected) { $0.packetV1 = packet; $0.packet = packet.flattenedCorePacket(); if !packet.identity.title.isEmpty { $0.title = packet.identity.title } }
+            }
         case "sidekickdm_add_participant_group", "sidekickdm_add_existing_participant_group":
             let requestedContentID = (command["content_id"] as? String) ?? ""
             let authoritativeEntry: CatalogEntry?
@@ -177,11 +270,20 @@ public enum SidekickCommandExecutor {
             let id = (command["id"] as? String) ?? Self.nextAvailableID(prefix: "group_", in: store.draft)
             let content = (command["content_id"] as? String) ?? "creature/custom/\(id)/current"
             let participantName = authoritativeEntry?.summary.name ?? (command["name"] as? String) ?? content
-            guard let adjustment = CreatureAdjustment(rawValue: (command["adjustment"] as? String) ?? "normal") else { throw SidekickDomainError("invalid_adjustment", "Adjustment must be normal, weak, or elite.") }
-            let faction = Faction(rawValue: (command["faction"] as? String) ?? "primary_opposition") ?? .primaryOpposition
+            let adjustmentValue = (command["adjustment"] as? String) ?? "normal"
+            guard let adjustment = CreatureAdjustment(rawValue: adjustmentValue) else { throw invalidEnum(field: "adjustment", value: adjustmentValue, allowed: CreatureAdjustment.allCases.map(\.rawValue)) }
+            let factionValue = (command["faction"] as? String) ?? "primary_opposition"
+            guard let faction = Faction(rawValue: factionValue) else { throw invalidEnum(field: "faction", value: factionValue, allowed: Faction.allCases.map(\.rawValue)) }
             let participationObject = command["participation"] as? [String: Any]
-            let mode = ParticipationMode(rawValue: participationObject?["mode"] as? String ?? (command["participation_mode"] as? String) ?? "mandatory") ?? .mandatory
-            let group = ParticipantGroup(id: id, contentID: content, name: participantName, level: level, quantity: quantity, adjustment: adjustment, faction: faction, participation: Participation(mode: mode), encounterRole: EncounterRole(rawValue: (command["encounter_role"] as? String) ?? "brute") ?? .brute, startingArea: (command["starting_area"] as? String) ?? "", sharedTactics: (command["shared_tactics"] as? String) ?? "", morale: (command["morale"] as? String) ?? "")
+            let modeValue = participationObject?["mode"] as? String ?? (command["participation_mode"] as? String) ?? "mandatory"
+            guard let mode = ParticipationMode(rawValue: modeValue) else { throw invalidEnum(field: "participation.mode", value: modeValue, allowed: ParticipationMode.allCases.map(\.rawValue)) }
+            let roleValue = (command["encounter_role"] as? String) ?? "brute"
+            guard let encounterRole = EncounterRole(rawValue: roleValue) else { throw invalidEnum(field: "encounter_role", value: roleValue, allowed: EncounterRole.allCases.map(\.rawValue)) }
+            let tierValue = (command["narrative_tier"] as? String) ?? "incidental"
+            guard let narrativeTier = NarrativeDetailTier(rawValue: tierValue) else { throw invalidEnum(field: "narrative_tier", value: tierValue, allowed: NarrativeDetailTier.allCases.map(\.rawValue)) }
+            let displayName = (command["display_name"] as? String).flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+            let condition = participationObject?["condition"] as? String ?? (command["participation_condition"] as? String)
+            let group = ParticipantGroup(id: id, contentID: content, name: participantName, displayName: displayName, level: level, quantity: quantity, adjustment: adjustment, faction: faction, participation: Participation(mode: mode, condition: condition), encounterRole: encounterRole, narrativeTier: narrativeTier, startingArea: (command["starting_area"] as? String) ?? "", sharedTactics: (command["shared_tactics"] as? String) ?? "", morale: (command["morale"] as? String) ?? "")
             try store.mutate(description: "Added \(quantity) × \(participantName)", origin: origin, expectedRevision: expected) { $0.participantGroups.append(group) }
         case "sidekickdm_update_participant_group":
             guard let id = command["component_id"] as? String, let index = store.draft.participantGroups.firstIndex(where: { $0.id == id }) else { throw SidekickDomainError("unknown_component", "That Participant Group is not in the Encounter.") }
@@ -189,12 +291,26 @@ public enum SidekickCommandExecutor {
             if let quantity, quantity < 1 { throw SidekickDomainError("invalid_quantity", "Participant quantity must be at least 1.") }
             let adjustment: CreatureAdjustment?
             if let value = command["adjustment"] as? String {
-                guard let parsed = CreatureAdjustment(rawValue: value) else { throw SidekickDomainError("invalid_adjustment", "Adjustment must be normal, weak, or elite.") }
+                guard let parsed = CreatureAdjustment(rawValue: value) else { throw invalidEnum(field: "adjustment", value: value, allowed: CreatureAdjustment.allCases.map(\.rawValue)) }
                 adjustment = parsed
             } else { adjustment = nil }
+            var faction: Faction?
+            if let value = command["faction"] as? String { guard let parsed = Faction(rawValue: value) else { throw invalidEnum(field: "faction", value: value, allowed: Faction.allCases.map(\.rawValue)) }; faction = parsed }
+            var mode: ParticipationMode?
+            if let value = command["participation_mode"] as? String { guard let parsed = ParticipationMode(rawValue: value) else { throw invalidEnum(field: "participation_mode", value: value, allowed: ParticipationMode.allCases.map(\.rawValue)) }; mode = parsed }
+            var role: EncounterRole?
+            if let value = command["encounter_role"] as? String { guard let parsed = EncounterRole(rawValue: value) else { throw invalidEnum(field: "encounter_role", value: value, allowed: EncounterRole.allCases.map(\.rawValue)) }; role = parsed }
+            var tier: NarrativeDetailTier?
+            if let value = command["narrative_tier"] as? String { guard let parsed = NarrativeDetailTier(rawValue: value) else { throw invalidEnum(field: "narrative_tier", value: value, allowed: NarrativeDetailTier.allCases.map(\.rawValue)) }; tier = parsed }
             try store.mutate(description: "Updated \(store.draft.participantGroups[index].name)", origin: origin, expectedRevision: expected) {
                 if let quantity { $0.participantGroups[index].quantity = quantity }
                 if let adjustment { $0.participantGroups[index].adjustment = adjustment }
+                if let displayName = command["display_name"] as? String { $0.participantGroups[index].displayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : displayName }
+                if let faction { $0.participantGroups[index].faction = faction }
+                if let mode { $0.participantGroups[index].participation.mode = mode }
+                if let condition = command["participation_condition"] as? String { $0.participantGroups[index].participation.condition = condition }
+                if let role { $0.participantGroups[index].encounterRole = role }
+                if let tier { $0.participantGroups[index].narrativeTier = tier }
             }
         case "sidekickdm_create_custom_creature":
             guard let payload = command["creature"] as? [String: Any], JSONSerialization.isValidJSONObject(payload), let data = try? JSONSerialization.data(withJSONObject: payload), let decoded = try? JSONDecoder().decode(OriginalCreature.self, from: data) else { throw SidekickDomainError("invalid_creature_stat_block", "The Original Creature payload is invalid.") }
@@ -278,10 +394,13 @@ public enum SidekickCommandExecutor {
             }
             let requestedLevel = try number(command, "level")
             let level = authoritativeEntry?.summary.level ?? requestedLevel ?? store.draft.brief.party.effectiveLevel
-            let complexity = authoritativeEntry?.summary.hazardComplexity ?? HazardComplexity(rawValue: (command["complexity"] as? String) ?? "simple") ?? .simple
+            let complexityValue = (command["complexity"] as? String) ?? authoritativeEntry?.summary.hazardComplexity?.rawValue ?? "simple"
+            guard let complexity = HazardComplexity(rawValue: complexityValue) else { throw invalidEnum(field: "complexity", value: complexityValue, allowed: HazardComplexity.allCases.map(\.rawValue)) }
             if name == "sidekickdm_add_hazard" && complexity == .complex { throw SidekickDomainError("unsupported_complex_hazard_generation", "Custom Complex Hazard creation is not supported. Use an Existing Complex Hazard from the Catalog.") }
             let hazardName = authoritativeEntry?.summary.name ?? (command["name"] as? String) ?? "Hazard \(id)"
-            let participation = Participation(mode: ParticipationMode(rawValue: (command["participation_mode"] as? String) ?? "avoidable") ?? .avoidable, condition: command["participation_condition"] as? String)
+            let modeValue = (command["participation_mode"] as? String) ?? "avoidable"
+            guard let mode = ParticipationMode(rawValue: modeValue) else { throw invalidEnum(field: "participation_mode", value: modeValue, allowed: ParticipationMode.allCases.map(\.rawValue)) }
+            let participation = Participation(mode: mode, condition: command["participation_condition"] as? String)
             let contentID = authoritativeEntry?.summary.contentID ?? (command["content_id"] as? String) ?? "hazard/custom/\(id)/current"
             let hazard = EncounterHazard(id: id, contentID: contentID, name: hazardName, level: level, complexity: complexity, participation: participation, placement: (command["placement"] as? String) ?? "")
             var phaseIDs = [String]()
@@ -309,7 +428,8 @@ public enum SidekickCommandExecutor {
             var snapshot = try HazardBuilder.create(decoded)
             snapshot.provenance.mutationOrigin = origin
             guard !store.draft.hazards.contains(where: { $0.id == snapshot.id }) else { throw SidekickDomainError("duplicate_component", "That Hazard is already in the Encounter.") }
-            let mode = ParticipationMode(rawValue: (command["participation_mode"] as? String) ?? "avoidable") ?? .avoidable
+            let modeValue = (command["participation_mode"] as? String) ?? "avoidable"
+            guard let mode = ParticipationMode(rawValue: modeValue) else { throw invalidEnum(field: "participation_mode", value: modeValue, allowed: ParticipationMode.allCases.map(\.rawValue)) }
             let participation = Participation(mode: mode, condition: command["participation_condition"] as? String)
             let encounterHazard = EncounterHazard(id: snapshot.id, contentID: snapshot.provenance.catalogContentID ?? "hazard/custom/\(snapshot.id)/current", name: snapshot.identity.name, level: snapshot.identity.level, complexity: .simple, participation: participation, placement: (command["placement"] as? String) ?? "")
             try store.mutate(description: "Created Simple Hazard \(snapshot.identity.name)", origin: origin, expectedRevision: expected) {
@@ -323,7 +443,13 @@ public enum SidekickCommandExecutor {
             var snapshot = try HazardBuilder.create(decoded)
             snapshot.provenance.mutationOrigin = origin
             guard let customIndex = store.draft.customHazards?.firstIndex(where: { $0.id == snapshot.id }), let encounterIndex = store.draft.hazards.firstIndex(where: { $0.id == snapshot.id }) else { throw SidekickDomainError("unknown_component", "That Simple Hazard is not in the Encounter.") }
-            let mode = (command["participation_mode"] as? String).flatMap(ParticipationMode.init(rawValue:))
+            let mode: ParticipationMode?
+            if let value = command["participation_mode"] as? String {
+                guard let parsed = ParticipationMode(rawValue: value) else { throw invalidEnum(field: "participation_mode", value: value, allowed: ParticipationMode.allCases.map(\.rawValue)) }
+                mode = parsed
+            } else {
+                mode = nil
+            }
             try store.mutate(description: "Updated Simple Hazard \(snapshot.identity.name)", origin: origin, expectedRevision: expected) {
                 $0.customHazards?[customIndex] = snapshot
                 $0.hazards[encounterIndex].name = snapshot.identity.name
@@ -477,6 +603,58 @@ public enum SidekickCommandExecutor {
         return ids
     }
 
+    private static func participantGroup(from command: [String: Any], store: EncounterStore) throws -> (group: ParticipantGroup, original: OriginalCreature?) {
+        let id = (command["id"] as? String) ?? nextAvailableID(prefix: "group_", in: store.draft)
+        let quantity = try number(command, "quantity") ?? 1
+        guard quantity > 0 else { throw SidekickDomainError("invalid_quantity", "Participant quantity must be at least 1.") }
+        let adjustmentValue = (command["adjustment"] as? String) ?? "normal"
+        guard let adjustment = CreatureAdjustment(rawValue: adjustmentValue) else { throw invalidEnum(field: "adjustment", value: adjustmentValue, allowed: CreatureAdjustment.allCases.map(\.rawValue)) }
+        let factionValue = (command["faction"] as? String) ?? "primary_opposition"
+        guard let faction = Faction(rawValue: factionValue) else { throw invalidEnum(field: "faction", value: factionValue, allowed: Faction.allCases.map(\.rawValue)) }
+        let roleValue = (command["encounter_role"] as? String) ?? "brute"
+        guard let role = EncounterRole(rawValue: roleValue) else { throw invalidEnum(field: "encounter_role", value: roleValue, allowed: EncounterRole.allCases.map(\.rawValue)) }
+        let tierValue = (command["narrative_tier"] as? String) ?? "incidental"
+        guard let tier = NarrativeDetailTier(rawValue: tierValue) else { throw invalidEnum(field: "narrative_tier", value: tierValue, allowed: NarrativeDetailTier.allCases.map(\.rawValue)) }
+        let participationObject = command["participation"] as? [String: Any]
+        let modeValue = participationObject?["mode"] as? String ?? (command["participation_mode"] as? String) ?? "mandatory"
+        guard let mode = ParticipationMode(rawValue: modeValue) else { throw invalidEnum(field: "participation.mode", value: modeValue, allowed: ParticipationMode.allCases.map(\.rawValue)) }
+        let participation = Participation(mode: mode, condition: participationObject?["condition"] as? String ?? command["participation_condition"] as? String)
+        let displayName = (command["display_name"] as? String).flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        if let payload = command["creature"] as? [String: Any], JSONSerialization.isValidJSONObject(payload), let data = try? JSONSerialization.data(withJSONObject: payload), let decoded = try? JSONDecoder().decode(OriginalCreature.self, from: data) {
+            let validation = CreatureBuilder.validate(decoded)
+            guard validation.structuralErrors.isEmpty else { throw SidekickDomainError("invalid_creature_stat_block", "The Original Creature has structural errors.", details: ["fields": validation.structuralErrors.map(\.field).joined(separator: ",")]) }
+            let original = try CreatureBuilder.create(decoded, origin: "webmcp")
+            let group = ParticipantGroup(id: id, contentID: "creature/original/\(original.id)/current", name: original.identity.name, displayName: displayName, level: original.identity.level, quantity: quantity, adjustment: adjustment, faction: faction, participation: participation, encounterRole: role, narrativeTier: tier, startingArea: command["starting_area"] as? String ?? "", sharedTactics: command["shared_tactics"] as? String ?? original.tactics, morale: command["morale"] as? String ?? original.morale)
+            return (group, original)
+        }
+        let contentID = command["content_id"] as? String ?? ""
+        guard let entry = store.catalog.get(contentID), case .creature(let creature) = entry else { throw SidekickDomainError("unknown_catalog_entry", "That Catalog Creature is not in the Catalog.", details: ["content_id": contentID]) }
+        try validateCatalogEntry(command["catalog_entry"] as? [String: Any], for: contentID, against: entry, catalog: store.catalog)
+        guard creature.summary.completeness == .complete, creature.summary.support == .supported else { throw SidekickDomainError("catalog_entry_partial", "Only complete, supported Catalog Entries can be added to a ready Encounter.") }
+        let group = ParticipantGroup(id: id, contentID: contentID, name: creature.summary.name, displayName: displayName, level: creature.summary.level, quantity: quantity, adjustment: adjustment, faction: faction, participation: participation, encounterRole: role, narrativeTier: tier, startingArea: command["starting_area"] as? String ?? "", sharedTactics: command["shared_tactics"] as? String ?? "", morale: command["morale"] as? String ?? "")
+        return (group, nil)
+    }
+
+    private static func encounterHazard(from command: [String: Any], store: EncounterStore) throws -> (hazard: EncounterHazard, custom: SimpleHazard?) {
+        if let payload = command["hazard"] as? [String: Any], JSONSerialization.isValidJSONObject(payload), let data = try? JSONSerialization.data(withJSONObject: payload), let decoded = try? JSONDecoder().decode(SimpleHazard.self, from: data) {
+            var snapshot = try HazardBuilder.create(decoded)
+            snapshot.provenance.mutationOrigin = "webmcp"
+            let id = snapshot.id
+            let modeValue = command["participation_mode"] as? String ?? "avoidable"
+            guard let mode = ParticipationMode(rawValue: modeValue) else { throw invalidEnum(field: "participation_mode", value: modeValue, allowed: ParticipationMode.allCases.map(\.rawValue)) }
+            return (EncounterHazard(id: id, contentID: snapshot.provenance.catalogContentID ?? "hazard/custom/\(id)/current", name: snapshot.identity.name, level: snapshot.identity.level, complexity: .simple, participation: Participation(mode: mode, condition: command["participation_condition"] as? String), placement: command["placement"] as? String ?? ""), snapshot)
+        }
+        let contentID = command["content_id"] as? String ?? ""
+        guard let entry = store.catalog.get(contentID), case .hazard(let hazard) = entry else { throw SidekickDomainError("unknown_catalog_entry", "That Catalog Hazard is not in the Catalog.", details: ["content_id": contentID]) }
+        try validateCatalogEntry(command["catalog_entry"] as? [String: Any], for: contentID, against: entry, catalog: store.catalog)
+        let id = command["id"] as? String ?? nextAvailableID(prefix: "hazard_", in: store.draft)
+        let complexityValue = command["complexity"] as? String ?? hazard.summary.hazardComplexity?.rawValue ?? "simple"
+        guard let complexity = HazardComplexity(rawValue: complexityValue) else { throw invalidEnum(field: "complexity", value: complexityValue, allowed: HazardComplexity.allCases.map(\.rawValue)) }
+        let modeValue = command["participation_mode"] as? String ?? "avoidable"
+        guard let mode = ParticipationMode(rawValue: modeValue) else { throw invalidEnum(field: "participation_mode", value: modeValue, allowed: ParticipationMode.allCases.map(\.rawValue)) }
+        return (EncounterHazard(id: id, contentID: contentID, name: hazard.summary.name, level: hazard.summary.level, complexity: complexity, participation: Participation(mode: mode, condition: command["participation_condition"] as? String), placement: command["placement"] as? String ?? ""), nil)
+    }
+
     private static func nextAvailableID(prefix: String, in draft: EncounterDraft) -> String {
         let ids = componentIDs(in: draft)
         var index = 1
@@ -534,6 +712,9 @@ public enum SidekickCommandExecutor {
     }
     private static func invalidInteger(_ key: String) -> SidekickDomainError {
         SidekickDomainError("invalid_request", "The \(key) value must be a finite integer.", details: ["field": key])
+    }
+    private static func invalidEnum(field: String, value: String, allowed: [String]) -> SidekickDomainError {
+        SidekickDomainError("invalid_request", "The \(field) value is not supported.", details: ["field": field, "value": value, "allowed_values": allowed.joined(separator: ",")])
     }
     private static func decodeDraftJSON(_ value: String) throws -> EncounterDraft {
         guard let bytes = value.data(using: .utf8) else { throw SidekickDomainError("invalid_request", "The saved Encounter Draft is invalid.") }

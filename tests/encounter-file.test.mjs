@@ -31,22 +31,25 @@ function fakeIndexedDB() {
   const transactions = [];
   const names = { contains: name => records.has(name) };
   const db = {
+    closed: false,
     objectStoreNames: names,
     createObjectStore(name) { records.set(name, new Map()); return {}; },
     transaction(storeNames, mode) {
       let completeHandler = null;
-      const transaction = { mode, pending: 0, onerror: null, onabort: null, objectStore(name) {
+      const transaction = { mode, storeNames, pending: 0, onerror: null, onabort: null, objectStore(name) {
         const data = records.get(name);
         return {
           getAllKeys() { return request(data ? [...data.keys()] : []); },
           getAll() { return request(data ? [...data.values()] : []); },
-          put(value, key) { if (!data) throw new Error(`Unknown fake store ${name}`); data.set(key, structuredClone(value)); return request(undefined, transaction); }
+          put(value, key) { if (!data) throw new Error(`Unknown fake store ${name}`); data.set(key, structuredClone(value)); return request(undefined, transaction); },
+          clear() { if (!data) throw new Error(`Unknown fake store ${name}`); data.clear(); return request(undefined, transaction); }
         };
       } };
       Object.defineProperty(transaction, "oncomplete", { get: () => completeHandler, set: handler => { completeHandler = handler; if (transaction.pending === 0) queueMicrotask(() => completeHandler?.()); } });
       transactions.push(transaction);
       return transaction;
-    }
+    },
+    close() { this.closed = true; }
   };
   function request(value, transaction = null) {
     const result = {};
@@ -67,6 +70,19 @@ function fakeIndexedDB() {
     transactions
   };
 }
+
+test("clears every local IndexedDB store in one transaction", async () => {
+  const fake = fakeIndexedDB();
+  const store = new IndexedDBEncounterStore({ indexedDBFactory: fake.factory });
+  await store.saveLibraryRecord("creature", { id: "cre_saved", identity: { name: "Saved Creature" } });
+  fake.records.get("encounters").set("current", { id: "enc_saved" });
+
+  await store.clearLocalData();
+
+  assert.ok([...fake.records.values()].every(records => records.size === 0));
+  assert.equal(fake.transactions.at(-1).mode, "readwrite");
+  assert.deepEqual([...fake.transactions.at(-1).storeNames], store.stores);
+});
 
 function fixture() {
   return {

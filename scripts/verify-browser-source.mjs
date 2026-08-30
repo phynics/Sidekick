@@ -14,6 +14,7 @@ for (const file of [
   "src/print-packet.js",
   "src/npc-profile.js",
   "src/encounter-phases.js",
+  "src/encounter-summary.js",
   "src/generation-run.js",
   "src/run-session.js",
   "src/webmcp-adapter.js"
@@ -25,7 +26,7 @@ for (const file of [
   });
 }
 const app = await readFile("src/app.js", "utf8");
-for (const fragment of ["globalThis.sidekickBridge", "globalThis.sidekickDM", "Change Swift state", "loadBootAssets", "Swift-owned value", "data-modal-open=\"catalog\"", "data-modal-open=\"creature\"", "data-modal-open=\"export\"", "data-pwl-group", "data-creature-remove", "Customize statistics", "data-catalog-filter", "data-catalog-page", "data-catalog-inspect", "Full Creature inspection", "catalogEntryCanAdd", "Add unavailable for unsupported or partial entries", "export-components-json", "export-components-zip", "export-library-json", "export-library-zip", "import-components-zip", "import-library-zip", "migrated v"]) {
+for (const fragment of ["globalThis.sidekickBridge", "globalThis.sidekickDM", "Change Swift state", "loadBootAssets", "Swift-owned value", "data-modal-open=\"catalog\"", "data-modal-open=\"creature\"", "data-modal-open=\"export\"", "data-modal-open=\"settings\"", "data-confirm-clear-local-data", "getConnectionStatus", "data-pwl-group", "data-creature-remove", "Customize statistics", "data-catalog-filter", "data-catalog-page", "data-catalog-inspect", "Full Creature inspection", "catalogEntryCanAdd", "Add unavailable for unsupported or partial entries", "export-components-json", "export-components-zip", "export-library-json", "export-library-zip", "import-components-zip", "import-library-zip", "migrated v"]) {
   if (!app.includes(fragment)) throw new Error(`Browser boundary contract missing: ${fragment}`);
 }
 

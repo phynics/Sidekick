@@ -2,6 +2,14 @@ import XCTest
 @testable import SidekickDMCore
 
 final class EncounterMathTests: XCTestCase {
+    func testNativeCapabilityMetadataMatchesGenerationInterface() {
+        XCTAssertEqual(SidekickCommandExecutor.engineInterfaceVersion, 2)
+        XCTAssertTrue(SidekickCommandExecutor.supportedCommands.contains("sidekickdm_apply_generation_step"))
+        XCTAssertTrue(SidekickCommandExecutor.supportedCommands.contains("sidekickdm_begin_generation"))
+        XCTAssertTrue(SidekickCommandExecutor.supportedCommands.contains("sidekickdm_finish_generation"))
+        XCTAssertTrue(SidekickCommandExecutor.supportedCommands.contains("sidekickdm_cancel_generation"))
+    }
+
     private func completePacket() -> EncounterPacketContentV1 {
         EncounterPacketContentV1(
             identity: PacketIdentitySection(title: "The Bell", premise: "Cultists ring a drowned bell.", objective: "Stop the ritual.", stakes: "The shrine floods."),
@@ -172,6 +180,54 @@ final class EncounterMathTests: XCTestCase {
             XCTAssertEqual((error as? SidekickDomainError)?.code, "no_active_generation")
         }
         XCTAssertEqual(store.draft, before)
+    }
+
+    func testGenerationCompositionPreservesParticipantMetadataAndRollsBackAtomically() throws {
+        let catalog = CatalogFixture.demo()
+        let creatureEntry = try XCTUnwrap(catalog.entries.first(where: { $0.summary.kind == .creature }))
+        let creatureSnapshot = try XCTUnwrap(catalog.authoritativeSnapshot(for: creatureEntry.summary.contentID))
+        let encodedSummary = try XCTUnwrap(try JSONSerialization.jsonObject(with: JSONEncoder().encode(creatureSnapshot)) as? [String: Any])["summary"] as! [String: Any]
+        let store = EncounterStore(catalog: catalog)
+        try SidekickCommandExecutor.execute(["command": "sidekickdm_set_party_snapshot", "effective_level": 5, "size": 4, "origin": "webmcp", "expected_revision": 0], in: store)
+        try SidekickCommandExecutor.execute(["command": "sidekickdm_begin_generation", "encounter_id": store.draft.id, "generation_run_id": "run_atomic", "expected_revision": 1, "expected_brief_revision": 1, "expected_constraints_revision": 1, "content_boundaries_acknowledged": true, "origin": "webmcp"], in: store)
+        let base: [String: Any] = [
+            "id": "group_atomic",
+            "content_id": creatureEntry.summary.contentID,
+            "catalog_entry": encodedSummary,
+            "quantity": 2,
+            "faction": "primary_opposition",
+            "participation": ["mode": "conditional", "condition": "When the bell rings."],
+            "encounter_role": "leader",
+            "narrative_tier": "prominent",
+            "display_name": "The Handoff Keeper"
+        ]
+        var invalid = base
+        invalid["faction"] = "invented_faction"
+        let before = store.draft
+        XCTAssertThrowsError(try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_apply_generation_step", "encounter_id": store.draft.id, "generation_run_id": "run_atomic",
+            "expected_revision": 2, "expected_constraints_revision": 1, "step": "composition", "participants": [base, invalid], "origin": "webmcp"
+        ], in: store)) { error in
+            XCTAssertEqual((error as? SidekickDomainError)?.code, "invalid_request")
+            XCTAssertEqual((error as? SidekickDomainError)?.details["field"], "faction")
+            XCTAssertEqual((error as? SidekickDomainError)?.details["value"], "invented_faction")
+            XCTAssertTrue((error as? SidekickDomainError)?.details["allowed_values"]?.contains("primary_opposition") == true)
+        }
+        XCTAssertEqual(store.draft, before)
+        XCTAssertTrue(store.draft.participantGroups.isEmpty)
+
+        try SidekickCommandExecutor.execute([
+            "command": "sidekickdm_apply_generation_step", "encounter_id": store.draft.id, "generation_run_id": "run_atomic",
+            "expected_revision": 2, "expected_constraints_revision": 1, "step": "composition", "participants": [base], "origin": "webmcp"
+        ], in: store)
+        let group = try XCTUnwrap(store.draft.participantGroups.first)
+        XCTAssertEqual(group.displayName, "The Handoff Keeper")
+        XCTAssertEqual(group.faction, .primaryOpposition)
+        XCTAssertEqual(group.encounterRole, .leader)
+        XCTAssertEqual(group.narrativeTier, .prominent)
+        XCTAssertEqual(group.participation.mode, .conditional)
+        XCTAssertEqual(group.participation.condition, "When the bell rings.")
+        XCTAssertEqual(store.draft.revision, 3)
     }
 
     func testInterruptedGenerationRejectsMutationsUntilResume() throws {

@@ -76,6 +76,27 @@ try {
   await command("Page.enable");
   await command("Runtime.enable");
   await command("DOM.enable");
+  await command("Page.addScriptToEvaluateOnNewDocument", { source: `(() => {
+    const tools = new Map();
+    const listeners = new Map();
+    const modelContext = {
+      async registerTool(definition) {
+        tools.set(definition.name, definition);
+        listeners.get("toolchange")?.();
+        return { unregister: async () => { tools.delete(definition.name); listeners.get("toolchange")?.(); } };
+      },
+      async getTools() { return [...tools.values()].map(({ name }) => ({ name })); },
+      addEventListener(name, listener) { listeners.set(name, listener); },
+      removeEventListener(name, listener) { if (listeners.get(name) === listener) listeners.delete(name); }
+    };
+    Object.defineProperty(navigator, "modelContext", { configurable: true, value: modelContext });
+    globalThis.__registeredSidekickTools = tools;
+    globalThis.__callRegisteredSidekickTool = (name, input = {}) => {
+      const tool = tools.get(name);
+      if (!tool) throw new Error("Registered WebMCP tool not found: " + name);
+      return tool.execute(input);
+    };
+  })();` });
   const networkRequests = new Set();
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(event.data);
@@ -88,6 +109,7 @@ try {
     return !(parsed.pathname === basePath || parsed.pathname === "/favicon.ico" || path === "/index.html" || path === "/styles.css" || path === "/favicon.ico" || path.startsWith("/src/") || path.startsWith("/public/"));
   });
   await command("Network.enable");
+  await command("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
   await command("Page.navigate", { url: pageURL });
   const setFileInput = async (selector, path) => {
     const document = await command("DOM.getDocument", { depth: -1 });
@@ -97,12 +119,41 @@ try {
   };
 
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=swift-value]')?.textContent.trim()"), "7");
+  await waitFor(async () => await evaluate("globalThis.__registeredSidekickTools?.size"), 62);
   const initial = await evaluate("({ value: document.querySelector('[data-testid=swift-value]').textContent.trim(), budget: document.querySelector('[data-testid=construction-budget]').textContent.trim(), asset: document.querySelector('[data-testid=asset-status]').textContent.trim(), bridge: document.querySelector('[data-testid=bridge-status]').textContent.trim() })");
   if (initial.value !== "7" || initial.budget !== "80 XP" || !initial.asset.includes("Static Encounter Brief")) throw new Error("Chromium did not render the initial Swift value, budget, and JSON asset.");
   const bootUnexpectedRequests = unexpectedStaticRequests();
   if (bootUnexpectedRequests.length) throw new Error(`Boot-time runtime made unexpected network request(s): ${bootUnexpectedRequests.join(", ")}`);
-  const webMCPBudget = await evaluate("globalThis.sidekickDM.webMCP.execute('sidekickdm_get_budget')");
-  if (!webMCPBudget?.ok || webMCPBudget.data.construction_budget !== 80) throw new Error("The read-only WebMCP adapter did not expose the current Wasm budget.");
+  const staleEngine = await evaluate(`(async () => {
+    const { loadSidekickEngine } = await import("./src/wasm-engine.js");
+    const manifest = await fetch("./public/wasm/sidekick-engine.manifest.json", { cache: "no-store" }).then(response => response.json());
+    const engine = await loadSidekickEngine({ fetcher: async url => String(url).includes("manifest") ? new Response(JSON.stringify(manifest), { status: 200 }) : new Response(new Uint8Array([0, 1, 2, 3]), { status: 200 }) });
+    return { available: engine.available, compatibility: engine.compatibility, reason: engine.reason };
+  })()`);
+  if (staleEngine.available || staleEngine.compatibility !== "update_required") throw new Error(`A stale Wasm response did not require an update: ${JSON.stringify(staleEngine)}`);
+  const webMCPBudget = await evaluate("globalThis.__callRegisteredSidekickTool('sidekickdm_get_budget')");
+  if (!webMCPBudget?.ok || webMCPBudget.data.construction_budget !== 80) throw new Error("The registered WebMCP interface did not expose the current Wasm budget.");
+  const registeredPresentation = await evaluate(`(async () => {
+    const snapshot = globalThis.sidekickDM.engine.snapshot;
+    const summary = await globalThis.__callRegisteredSidekickTool("sidekickdm_get_encounter_summary", { encounter_id: snapshot.encounter.id });
+    const emptyHazards = await globalThis.__callRegisteredSidekickTool("sidekickdm_search_catalog", { query: "reality-fray-hazard", kind: "hazard" });
+    const draft = await globalThis.__callRegisteredSidekickTool("sidekickdm_draft_custom_creature", { name: "Wrong-Eyed Herald", level: 11, concept: "A swamp guide changed by broken reality.", role: "controller", traits: ["humanoid", "occult"] });
+    document.querySelector(".sidekick-toggle")?.click();
+    if (!document.querySelector("[data-testid=agent-shelf]")?.classList.contains("is-expanded")) document.querySelector("[data-agent-expand]")?.click();
+    return {
+      summary: summary.activity,
+      encounterTitle: summary.data.title,
+      hazards: emptyHazards.activity,
+      preview: draft.activity.preview,
+      previewVisible: document.querySelector("[data-testid=agent-read-preview]")?.textContent.trim() ?? ""
+    };
+  })()`);
+  if (registeredPresentation.summary.summary !== "Read the encounter overview" || registeredPresentation.summary.target_label !== registeredPresentation.encounterTitle || registeredPresentation.hazards.summary !== "No matching hazards found · Creating custom hazards" || !registeredPresentation.previewVisible.includes("Wrong-Eyed Herald") || !registeredPresentation.previewVisible.includes("has not changed")) throw new Error(`Registered WebMCP presentation was inaccurate: ${JSON.stringify(registeredPresentation)}`);
+  const webMCPConnectionSurface = await evaluate("(() => { const status = globalThis.sidekickDM.webMCP.getConnectionStatus(); const dot = document.querySelector('[data-connection-state]'); return { status, label: document.querySelector('[data-testid=webmcp-status]')?.textContent.trim(), dot: dot?.dataset.connectionState }; })()");
+  if (webMCPConnectionSurface.status.state !== webMCPConnectionSurface.dot || webMCPConnectionSurface.status.label !== webMCPConnectionSurface.label) throw new Error(`The visible WebMCP status did not match the adapter lifecycle: ${JSON.stringify(webMCPConnectionSurface)}`);
+  const settingsSurface = await evaluate("(() => { document.querySelector('[data-modal-open=settings]').click(); let dialog = document.querySelector('[data-modal=settings]'); const initial = { open: dialog.open, clearButton: Boolean(dialog.querySelector('[data-request-clear-local-data]')) }; dialog.querySelector('[data-request-clear-local-data]').click(); dialog = document.querySelector('[data-modal=settings]'); const confirmation = { open: dialog.open, warning: dialog.querySelector('.clear-confirmation')?.textContent.trim() ?? '', confirmButton: Boolean(dialog.querySelector('[data-confirm-clear-local-data]')) }; dialog.querySelector('[data-cancel-clear-local-data]').click(); return { initial, confirmation, canceled: Boolean(document.querySelector('[data-modal=settings] [data-request-clear-local-data]')) }; })()");
+  if (!settingsSurface?.initial.open || !settingsSurface.initial.clearButton || !settingsSurface.confirmation.open || !settingsSurface.confirmation.warning.includes("cannot be undone") || !settingsSurface.confirmation.confirmButton || !settingsSurface.canceled) throw new Error(`Settings did not provide a guarded clear-local-data flow: ${JSON.stringify(settingsSurface)}`);
+  await evaluate("document.querySelector('[data-modal=settings] [data-modal-close]').click()");
   await evaluate("document.querySelector('[data-action=new-encounter]').click()");
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=notice]')?.textContent.trim()"), "New Encounter Draft created");
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=construction-budget]')?.textContent.trim()"), "80 XP");
@@ -142,15 +193,15 @@ try {
   await waitFor(async () => await evaluate("document.querySelector('[data-testid=guaranteed-xp]').textContent.trim()"), "95 XP");
   const catalogCreatureLedger = await evaluate("({ count: document.querySelector('[data-testid=creature-count-group_2]')?.textContent.trim(), xp: document.querySelector('[data-testid=creature-xp-group_2]')?.textContent.trim(), attacks: document.querySelector('[data-testid=creature-attacks-group_2]')?.textContent.trim(), features: document.querySelector('[data-testid=creature-features-group_2]')?.textContent.trim() })");
   if (catalogCreatureLedger.count !== "×1" || catalogCreatureLedger.xp !== "15 XP" || !catalogCreatureLedger.attacks || !catalogCreatureLedger.features) throw new Error(`Creature ledger did not emphasize count and XP or list mechanics: ${JSON.stringify(catalogCreatureLedger)}`);
-  const workspaceBeforeStart = await evaluate("(() => { document.querySelector('[data-mode=library]').click(); const library = { visible: getComputedStyle(document.querySelector('[data-testid=library-workspace]')).display !== 'none', encounters: document.querySelectorAll('[data-library-select-record]').length, preview: Boolean(document.querySelector('[data-testid=library-preview]')) }; document.querySelector('[data-mode=run]').click(); return { library, beforeStart: { combatants: document.querySelectorAll('[data-run-select]').length, start: Boolean(document.querySelector('[data-start-encounter]')) } }; })()");
+  const workspaceBeforeStart = await evaluate("(() => { document.querySelector('[data-mode=library]').click(); const libraryRow = document.querySelector('[data-library-select-record]'); const enemyRoster = document.querySelector('[data-library-roster=enemies]'); const hazardRoster = document.querySelector('[data-library-roster=hazards]'); const roster = { controls: document.querySelectorAll('[data-library-roster]').length, enemySummary: enemyRoster?.querySelector('summary')?.textContent.trim() ?? '', hazardSummary: hazardRoster?.querySelector('summary')?.textContent.trim() ?? '' }; if (enemyRoster) enemyRoster.open = true; if (hazardRoster) hazardRoster.open = true; roster.enemyExpanded = Boolean(enemyRoster?.open && enemyRoster.querySelector('.roster-disclosure-body li')); roster.hazardExpanded = Boolean(hazardRoster?.open && hazardRoster.querySelector('.roster-disclosure-body li')); document.querySelector('[data-library-inspect-kind=enemy]')?.click(); const inspection = document.querySelector('[data-modal=library-inspection]'); roster.enemyInspectable = Boolean(inspection?.open && inspection.querySelector('.catalog-inspection') && inspection.querySelector('.encounter-inspection-context')); inspection?.querySelector('[data-modal-close]')?.click(); const library = { visible: getComputedStyle(document.querySelector('[data-testid=library-workspace]')).display !== 'none', encounters: document.querySelectorAll('[data-library-select-record]').length, preview: Boolean(document.querySelector('[data-testid=library-preview]')), summary: libraryRow?.textContent.trim() ?? '', roster }; window.scrollTo(0, 600); document.querySelector('[data-mode=run]').click(); return { library, beforeStart: { combatants: document.querySelectorAll('[data-run-select]').length, start: Boolean(document.querySelector('[data-start-encounter]')), toolbarTop: Math.round(document.querySelector('.run-toolbar')?.getBoundingClientRect().top ?? -1), scrollY } }; })()");
   await evaluate("document.querySelector('[data-start-encounter]').click()");
   await waitFor(async () => await evaluate("document.querySelectorAll('[data-run-select]').length >= 3"), true);
-  const workspaceRun = await evaluate("({ visible: getComputedStyle(document.querySelector('[data-testid=run-workspace]')).display !== 'none', combatants: document.querySelectorAll('[data-run-select]').length, sheet: document.querySelector('.combatant-sheet h2')?.textContent.trim() })");
+  const workspaceRun = await evaluate("({ visible: getComputedStyle(document.querySelector('[data-testid=run-workspace]')).display !== 'none', combatants: document.querySelectorAll('[data-run-select]').length, sheet: document.querySelector('.combatant-sheet h2')?.textContent.trim(), toolbarTop: Math.round(document.querySelector('.run-toolbar')?.getBoundingClientRect().top ?? -1), scrollY })");
   const workspaceModes = { ...workspaceBeforeStart, run: workspaceRun };
-  if (!workspaceModes.library.visible || workspaceModes.library.encounters < 1 || !workspaceModes.library.preview || workspaceModes.beforeStart.combatants !== 0 || !workspaceModes.beforeStart.start || !workspaceModes.run.visible || workspaceModes.run.combatants < 3 || !workspaceModes.run.sheet) throw new Error(`Library, Build, and explicit Run start failed: ${JSON.stringify(workspaceModes)}`);
-  const shelfFlow = await evaluate("(() => { const shelf = document.querySelector('[data-testid=agent-shelf]'); const initial = shelf?.className; const status = document.querySelector('[data-testid=webmcp-status]')?.textContent; document.querySelector('[data-agent-dismiss]')?.click(); const dismissed = document.querySelector('[data-testid=agent-shelf]')?.classList.contains('is-dismissed'); document.querySelector('.sidekick-toggle')?.click(); const recalled = document.querySelector('[data-testid=agent-shelf]')?.classList.contains('is-compact'); document.querySelector('[data-agent-expand]')?.click(); const expanded = document.querySelector('[data-testid=agent-shelf]')?.classList.contains('is-expanded'); return { initial, status, dismissed, recalled, expanded }; })()");
-  const expectedInitialShelf = shelfFlow.status?.includes("connected") ? shelfFlow.initial?.includes("is-compact") : shelfFlow.initial?.includes("is-dismissed");
-  if (!expectedInitialShelf || !shelfFlow.dismissed || !shelfFlow.recalled || !shelfFlow.expanded) throw new Error(`Sidekick shelf could not dismiss, recall, and expand: ${JSON.stringify(shelfFlow)}`);
+  if (!workspaceModes.library.visible || workspaceModes.library.encounters < 1 || !workspaceModes.library.preview || !workspaceModes.library.summary.includes("enemies") || workspaceModes.library.summary.includes("enemyies") || workspaceModes.library.roster.controls !== 2 || !workspaceModes.library.roster.enemySummary.includes("XP") || !workspaceModes.library.roster.hazardSummary.includes("hazard") || !workspaceModes.library.roster.enemyExpanded || !workspaceModes.library.roster.hazardExpanded || !workspaceModes.library.roster.enemyInspectable || workspaceModes.beforeStart.combatants !== 0 || !workspaceModes.beforeStart.start || workspaceModes.beforeStart.scrollY !== 0 || !workspaceModes.run.visible || workspaceModes.run.combatants < 3 || !workspaceModes.run.sheet || workspaceModes.run.toolbarTop < 0 || workspaceModes.run.scrollY !== 0) throw new Error(`Library, inspectable expandable rosters, Build, and explicit Run start failed: ${JSON.stringify(workspaceModes)}`);
+  const shelfFlow = await evaluate("(() => { const shelf = document.querySelector('[data-testid=agent-shelf]'); const initial = shelf?.className; const status = document.querySelector('[data-testid=webmcp-status]')?.textContent; document.querySelector('[data-agent-dismiss]')?.click(); const dismissedShelf = document.querySelector('[data-testid=agent-shelf]'); const dismissed = dismissedShelf?.classList.contains('is-dismissed'); const inert = dismissedShelf?.inert && dismissedShelf?.getAttribute('aria-hidden') === 'true'; document.querySelector('.sidekick-toggle')?.click(); const recalled = document.querySelector('[data-testid=agent-shelf]')?.classList.contains('is-compact'); document.querySelector('[data-agent-expand]')?.click(); const expanded = document.querySelector('[data-testid=agent-shelf]')?.classList.contains('is-expanded'); return { initial, status, dismissed, inert, recalled, expanded }; })()");
+  const expectedInitialShelf = shelfFlow.initial?.includes("is-dismissed");
+  if (!expectedInitialShelf || !shelfFlow.dismissed || !shelfFlow.inert || !shelfFlow.recalled || !shelfFlow.expanded) throw new Error(`Sidekick shelf could not dismiss accessibly, recall, and expand: ${JSON.stringify(shelfFlow)}`);
   const runCombatantID = await evaluate("[...document.querySelectorAll('.initiative-entry [data-run-select]')].find(entry => entry.textContent.includes('Orc Veteran'))?.dataset.runSelect");
   if (!runCombatantID) throw new Error(`Live run did not expose the catalog creature: ${JSON.stringify(await evaluate("[...document.querySelectorAll('.initiative-entry [data-run-select]')].map(entry => ({ id: entry.dataset.runSelect, text: entry.textContent.trim() }))"))}`);
   await evaluate(`(() => { const initiative = document.querySelector('[data-run-initiative="${runCombatantID}"]'); initiative.value = '22'; initiative.dispatchEvent(new Event('change', { bubbles: true })); })()`);
@@ -178,7 +229,10 @@ try {
   const narrowLedger = await evaluate("(() => { const card = document.querySelector('[data-testid=participant-group_2]'); const impact = card?.querySelector('.creature-impact'); const identity = card?.querySelector('.creature-identity'); if (!card || !impact || !identity) return null; const impactRect = impact.getBoundingClientRect(); const identityRect = identity.getBoundingClientRect(); return { impactWidth: Math.round(impactRect.width), cardWidth: Math.round(card.getBoundingClientRect().width), impactBelowIdentity: impactRect.top >= identityRect.bottom - 1 }; })()");
   if (!narrowLedger || narrowLedger.impactWidth >= narrowLedger.cardWidth * 0.7 || !narrowLedger.impactBelowIdentity) throw new Error(`Creature impact controls did not reflow at narrow width: ${JSON.stringify(narrowLedger)}`);
   const mobileShelf = await evaluate("(() => { const shelf = document.querySelector('[data-testid=agent-shelf]'); const rect = shelf?.getBoundingClientRect(); return rect ? { left: Math.round(rect.left), right: Math.round(rect.right), bottom: Math.round(rect.bottom), viewport: innerWidth, height: innerHeight } : null; })()");
-  if (!mobileShelf || mobileShelf.left < 0 || mobileShelf.right > mobileShelf.viewport || mobileShelf.bottom > mobileShelf.height) throw new Error(`Sidekick shelf escaped the mobile viewport: ${JSON.stringify(mobileShelf)}`);
+  await command("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await new Promise(resolve => setTimeout(resolve, 280));
+  const phoneLayout = await evaluate("(() => { const shelf = document.querySelector('[data-testid=agent-shelf]'); const rect = shelf?.getBoundingClientRect(); const style = shelf ? getComputedStyle(shelf) : null; return { shelf: rect ? { left: Math.round(rect.left), right: Math.round(rect.right), bottom: Math.round(rect.bottom), viewport: innerWidth, height: innerHeight } : null, overflow: document.documentElement.scrollWidth - innerWidth, actionVisible: Boolean(document.querySelector('.encounter-stage')), media: matchMedia('(max-width: 600px)').matches, transform: style?.transform, left: style?.left, right: style?.right }; })()");
+  if (!mobileShelf || mobileShelf.left < 0 || mobileShelf.right > mobileShelf.viewport || mobileShelf.bottom > mobileShelf.height || !phoneLayout.shelf || phoneLayout.shelf.left < 0 || phoneLayout.shelf.right > phoneLayout.shelf.viewport || phoneLayout.shelf.bottom > phoneLayout.shelf.height || phoneLayout.overflow > 1 || !phoneLayout.actionVisible) throw new Error(`Sidekick shelf escaped the narrow or mobile viewport: ${JSON.stringify({ narrow: mobileShelf, phone: phoneLayout })}`);
   await command("Emulation.clearDeviceMetricsOverride");
   await command("Page.reload");
   await waitFor(async () => await evaluate("document.readyState"), "complete");
@@ -341,12 +395,13 @@ try {
   const transferredCounts = await evaluate(`(async () => { const db = await new Promise((resolve, reject) => { const request = indexedDB.open("sidekick-dm", 3); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); const names = ["encounters", "creatures", "npc_profiles", "hazards"]; const counts = {}; const tx = db.transaction(names, "readonly"); await Promise.all(names.map(name => new Promise((resolve, reject) => { const request = tx.objectStore(name).count(); request.onsuccess = () => { counts[name] = request.result; resolve(); }; request.onerror = () => reject(request.error); }))); return counts; })()`);
   if ((transferredCounts?.creatures ?? 0) < 1 || (transferredCounts?.npc_profiles ?? 0) < 1 || (transferredCounts?.hazards ?? 0) < 1 || (transferredCounts?.encounters ?? 0) < 1) throw new Error(`Component/library transfer did not persist records: ${JSON.stringify(transferredCounts)}`);
 
-  const runCall = (tool, fields = {}) => evaluate(`(async () => { const snapshot = globalThis.sidekickDM.engine.snapshot; return globalThis.sidekickDM.webMCP.execute(${JSON.stringify(tool)}, ${JSON.stringify(fields)}); })()`);
-  const runCallWithRevision = (tool, fields = {}) => evaluate(`(async () => { const snapshot = globalThis.sidekickDM.engine.snapshot; return globalThis.sidekickDM.webMCP.execute(${JSON.stringify(tool)}, { ...${JSON.stringify(fields)}, encounter_id: snapshot.encounter.id, generation_run_id: snapshot.generationRunID, expected_encounter_revision: snapshot.encounter.revision, expected_constraints_revision: snapshot.constraintsRevision ?? snapshot.encounter.constraintsRevision ?? 0 }); })()`);
+  const runCall = (tool, fields = {}) => evaluate(`(async () => { const snapshot = globalThis.sidekickDM.engine.snapshot; return globalThis.__callRegisteredSidekickTool(${JSON.stringify(tool)}, ${JSON.stringify(fields)}); })()`);
+  const runCallWithRevision = (tool, fields = {}) => evaluate(`(async () => { const snapshot = globalThis.sidekickDM.engine.snapshot; return globalThis.__callRegisteredSidekickTool(${JSON.stringify(tool)}, { ...${JSON.stringify(fields)}, encounter_id: snapshot.encounter.id, generation_run_id: snapshot.generationRunID, expected_encounter_revision: snapshot.encounter.revision, expected_constraints_revision: snapshot.constraintsRevision ?? snapshot.encounter.constraintsRevision ?? 0 }); })()`);
   const generationOpening = await evaluate("structuredClone(globalThis.sidekickDM.engine.snapshot.encounter)");
+  await evaluate("document.querySelector('[data-agent-dismiss]')?.click()");
   const generationStart = await evaluate(`(async () => {
     const snapshot = globalThis.sidekickDM.engine.snapshot;
-    return globalThis.sidekickDM.webMCP.execute("sidekickdm_begin_generation", {
+    return globalThis.__callRegisteredSidekickTool("sidekickdm_begin_generation", {
       encounter_id: snapshot.encounter.id,
       expected_encounter_revision: snapshot.encounter.revision,
       expected_brief_revision: snapshot.briefRevision ?? snapshot.encounter.briefRevision ?? 0,
@@ -356,19 +411,28 @@ try {
     });
   })()`);
   if (!generationStart?.ok || !generationStart.generation_run_id) throw new Error(`WebMCP Generation Run did not begin: ${JSON.stringify(generationStart)}`);
+  const automaticShelf = await evaluate("(() => { const shelf = document.querySelector('[data-testid=agent-shelf]'); const expanded = shelf?.classList.contains('is-expanded'); document.querySelector('[data-agent-expand]')?.click(); return { expanded, manuallyCollapsed: document.querySelector('[data-testid=agent-shelf]')?.classList.contains('is-compact') }; })()");
+  if (!automaticShelf.expanded || !automaticShelf.manuallyCollapsed) throw new Error(`A Generation Run did not auto-expand once or honor manual collapse: ${JSON.stringify(automaticShelf)}`);
 
-  const participantMutation = await runCallWithRevision("sidekickdm_add_existing_participant_group", {
-    content_id: "creature/monster-core/goblin-warrior/current",
-    quantity: 1,
-    adjustment: "normal",
-    faction: "secondary_opposition",
-    participation: { mode: "reinforcement" },
-    encounter_role: "skirmisher",
-    starting_area: "North stair",
-    shared_tactics: "Harass isolated targets.",
-    morale: "Withdraw when the captain falls."
+  const participantMutation = await runCallWithRevision("sidekickdm_apply_generation_step", {
+    step: "composition",
+    participants: [{
+      content_id: "creature/monster-core/goblin-warrior/current",
+      quantity: 1,
+      adjustment: "normal",
+      faction: "secondary_opposition",
+      participation: { mode: "reinforcement" },
+      encounter_role: "skirmisher",
+      narrative_tier: "supporting",
+      display_name: "Handoff Goblin",
+      starting_area: "North stair",
+      shared_tactics: "Harass isolated targets.",
+      morale: "Withdraw when the captain falls."
+    }]
   });
   if (!participantMutation?.ok) throw new Error(`WebMCP Generation Run participant mutation failed: ${JSON.stringify(participantMutation)}`);
+  if (!await evaluate("document.querySelector('[data-testid=agent-shelf]')?.classList.contains('is-compact')")) throw new Error("A later Generation Run tool reopened the manually collapsed shelf.");
+  if (participantMutation.data?.participant?.faction !== "secondary_opposition" && participantMutation.data?.participants?.[0]?.faction !== "secondary_opposition") throw new Error(`Atomic composition did not return authoritative participant metadata: ${JSON.stringify(participantMutation)}`);
   const generationParticipantID = await evaluate("globalThis.sidekickDM.engine.snapshot.encounter.participantGroups.at(-1).id");
 
   const generationHazard = await evaluate(`(() => { const source = globalThis.sidekickDM.engine.snapshot.encounter.customHazards?.[0]; if (!source) return null; const hazard = structuredClone(source); hazard.id = "generation_hazard"; hazard.identity = { ...(hazard.identity ?? {}), name: "Generation Run Snare" }; return hazard; })()`);
@@ -402,7 +466,7 @@ try {
 
   const generationFinish = await evaluate(`(async () => {
     const snapshot = globalThis.sidekickDM.engine.snapshot;
-    return globalThis.sidekickDM.webMCP.execute("sidekickdm_finish_generation", {
+    return globalThis.__callRegisteredSidekickTool("sidekickdm_finish_generation", {
       encounter_id: snapshot.encounter.id,
       generation_run_id: snapshot.generationRunID,
       expected_encounter_revision: snapshot.encounter.revision,
@@ -411,12 +475,21 @@ try {
     });
   })()`);
   if (!generationFinish?.ok || generationFinish.generation_run_id) throw new Error(`WebMCP Generation Run did not finish: ${JSON.stringify(generationFinish)}`);
+  const generationReview = await evaluate("(() => { const card = document.querySelector('[data-testid=generation-workspace]'); return { present: Boolean(card), requested: card?.textContent.includes('Requested difficulty'), inferred: card?.textContent.includes('Inferred difficulty'), opposition: card?.textContent.includes('Opposition'), review: Boolean(card?.querySelector('[data-modal-open=run]')), save: Boolean(card?.querySelector('[data-review-save]')), start: Boolean(card?.querySelector('[data-start-encounter]')) }; })()");
+  if (!generationReview?.present || !generationReview.requested || !generationReview.inferred || !generationReview.opposition || !generationReview.review || !generationReview.save || !generationReview.start) throw new Error(`Generation completion review card was incomplete: ${JSON.stringify(generationReview)}`);
+  const savedGeneration = await evaluate(`(async () => { const snapshot = globalThis.sidekickDM.engine.snapshot; const pending = globalThis.__callRegisteredSidekickTool("sidekickdm_save_encounter", { encounter_id: snapshot.encounter.id }); await new Promise(requestAnimationFrame); const waiting = Boolean(document.querySelector(".agent-waiting-bauble")); const result = await pending; return { result, waiting, stopped: !document.querySelector(".agent-waiting-bauble") }; })()`);
+  if (!savedGeneration?.result?.ok || !savedGeneration.stopped) throw new Error(`Registered WebMCP save or waiting-state cleanup failed: ${JSON.stringify(savedGeneration)}`);
+  await waitFor(async () => await evaluate("document.querySelector('[data-testid=library-workspace]') !== null"), true);
+  await new Promise(resolve => setTimeout(resolve, 350));
+  const savedLibraryPresentation = await evaluate("(() => { const row = document.querySelector('[data-library-select-record].is-selected'); const preview = document.querySelector('[data-testid=library-preview]'); const rect = row?.getBoundingClientRect(); return { selected: Boolean(row), title: preview?.querySelector('h2')?.textContent.trim(), visible: Boolean(rect && rect.bottom > 0 && rect.top < innerHeight) }; })()");
+  if (!savedLibraryPresentation.selected || !savedLibraryPresentation.title || !savedLibraryPresentation.visible) throw new Error(`Saving did not reveal the selected Library card: ${JSON.stringify(savedLibraryPresentation)}`);
+  await evaluate("document.querySelector('[data-mode=build]').click()");
   const finishedGenerationState = await evaluate("structuredClone(globalThis.sidekickDM.engine.snapshot.encounter)");
   const targetedTitle = "The Bell Beneath Blackwater · Targeted Revision";
   const targeted = await evaluate(`(async () => {
     const snapshot = globalThis.sidekickDM.engine.snapshot;
     const identity = { ...(snapshot.encounter.packetV1?.identity ?? snapshot.encounter.packet_v1?.identity ?? {}), title: ${JSON.stringify(targetedTitle)} };
-    return globalThis.sidekickDM.webMCP.execute("sidekickdm_apply_targeted_revision", {
+    return globalThis.__callRegisteredSidekickTool("sidekickdm_apply_targeted_revision", {
       encounter_id: snapshot.encounter.id,
       expected_encounter_revision: snapshot.encounter.revision,
       section: "encounter_identity",
@@ -431,14 +504,23 @@ try {
     if (value.provenance) { delete value.provenance.origin; delete value.provenance.lastMutationOrigin; }
     return value;
   };
-  const undoTargeted = await evaluate(`(async () => { const snapshot = globalThis.sidekickDM.engine.snapshot; return globalThis.sidekickDM.webMCP.execute("sidekickdm_undo", { encounter_id: snapshot.encounter.id, expected_encounter_revision: snapshot.encounter.revision }); })()`);
+  const undoTargeted = await evaluate(`(async () => { const snapshot = globalThis.sidekickDM.engine.snapshot; return globalThis.__callRegisteredSidekickTool("sidekickdm_undo", { encounter_id: snapshot.encounter.id, expected_encounter_revision: snapshot.encounter.revision }); })()`);
   if (!undoTargeted?.ok || undoTargeted.data?.encounter?.title === targetedTitle) throw new Error("WebMCP targeted revision was not independently undoable.");
   const afterTargetedUndo = await evaluate("structuredClone(globalThis.sidekickDM.engine.snapshot.encounter)");
   if (JSON.stringify(comparableEncounter(afterTargetedUndo)) !== JSON.stringify(comparableEncounter(finishedGenerationState))) throw new Error("WebMCP targeted Undo did not restore the exact finished Generation Run state.");
-  const undoRun = await evaluate(`(async () => { const snapshot = globalThis.sidekickDM.engine.snapshot; return globalThis.sidekickDM.webMCP.execute("sidekickdm_undo", { encounter_id: snapshot.encounter.id, expected_encounter_revision: snapshot.encounter.revision }); })()`);
+  const undoRun = await evaluate(`(async () => { const snapshot = globalThis.sidekickDM.engine.snapshot; return globalThis.__callRegisteredSidekickTool("sidekickdm_undo", { encounter_id: snapshot.encounter.id, expected_encounter_revision: snapshot.encounter.revision }); })()`);
   if (!undoRun?.ok || undoRun.data?.encounter?.title === targetedTitle) throw new Error("WebMCP whole-run rollback did not complete after the targeted revision rollback.");
   const afterWholeRunUndo = await evaluate("structuredClone(globalThis.sidekickDM.engine.snapshot.encounter)");
   if (JSON.stringify(comparableEncounter(afterWholeRunUndo)) !== JSON.stringify(comparableEncounter(generationOpening))) throw new Error("WebMCP whole-run Undo did not restore the exact opening Encounter state.");
+  const stopStart = await evaluate(`(async () => { const snapshot = globalThis.sidekickDM.engine.snapshot; return globalThis.__callRegisteredSidekickTool("sidekickdm_begin_generation", { encounter_id: snapshot.encounter.id, expected_encounter_revision: snapshot.encounter.revision, expected_brief_revision: snapshot.briefRevision ?? snapshot.encounter.briefRevision ?? 0, expected_constraints_revision: snapshot.constraintsRevision ?? snapshot.encounter.constraintsRevision ?? 0, content_boundaries_acknowledged: true, intent_summary: "Verify the visible Stop control." }); })()`);
+  if (!stopStart?.ok) throw new Error(`Stop-control Generation Run did not begin: ${JSON.stringify(stopStart)}`);
+  await evaluate("document.querySelector('[data-generation-stop]')?.click()");
+  await waitFor(async () => await evaluate("globalThis.sidekickDM.engine.snapshot.generationRunID ?? null"), null);
+  await waitFor(async () => await evaluate("[...document.querySelectorAll('.agent-activity li')].some(entry => entry.textContent.includes('Stopped encounter generation'))"), true);
+  const stoppedPresentation = await evaluate("(() => { const entries = [...document.querySelectorAll('.agent-activity li')]; const times = entries.map(entry => Date.parse(entry.dataset.activityTime)).filter(Number.isFinite); return { canceled: entries.some(entry => entry.textContent.includes('Stopped encounter generation')), chronological: times.every((time, index) => index === 0 || time >= times[index - 1]) }; })()");
+  if (!stoppedPresentation.canceled || !stoppedPresentation.chronological) throw new Error(`Stop or chronological activity presentation failed: ${JSON.stringify(stoppedPresentation)}`);
+  const preservedActivityScroll = await evaluate(`(async () => { const list = document.querySelector('.agent-activity ul'); if (!list) return null; list.scrollTop = 0; await globalThis.__callRegisteredSidekickTool("sidekickdm_get_budget"); return { top: document.querySelector('.agent-activity ul')?.scrollTop, overflow: document.querySelector('.agent-activity ul')?.scrollHeight > document.querySelector('.agent-activity ul')?.clientHeight }; })()`);
+  if (preservedActivityScroll?.overflow && preservedActivityScroll.top !== 0) throw new Error(`Activity history jumped while reading older entries: ${JSON.stringify(preservedActivityScroll)}`);
   const renderedPrint = await evaluate("globalThis.sidekickDM.actions.printEncounter()");
   if (typeof renderedPrint !== "string" || !renderedPrint.includes("data-print-packet=\"1\"") || !renderedPrint.includes("print-running-header") || !renderedPrint.includes("Notices and provenance")) throw new Error("Print Packet HTML did not contain the runnable packet, repeated header, and notice sections.");
   const frameTree = await command("Page.getFrameTree");

@@ -1,4 +1,5 @@
-import { cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
@@ -43,5 +44,14 @@ const candidates = [
 const source = candidates.find(existsSync);
 if (!source) throw new Error("Swift completed but sidekick-engine.wasm was not found in the expected build outputs.");
 mkdirSync(join(root, "public/wasm"), { recursive: true });
-cpSync(source, join(root, "public/wasm/sidekick-engine.wasm"));
-console.log(`Sidekick DM Wasm built from ${source}`);
+const destination = join(root, "public/wasm/sidekick-engine.wasm");
+cpSync(source, destination);
+const buildID = createHash("sha256").update(readFileSync(destination)).digest("hex");
+writeFileSync(join(root, "public/wasm/sidekick-engine.manifest.json"), `${JSON.stringify({
+  manifest_version: 1,
+  protocol_version: 1,
+  interface_version: 2,
+  build_id: buildID,
+  asset: "sidekick-engine.wasm"
+}, null, 2)}\n`);
+console.log(`Sidekick DM Wasm built from ${source} (${buildID.slice(0, 12)})`);

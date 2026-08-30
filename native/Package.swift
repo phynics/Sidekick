@@ -26,7 +26,8 @@ let package = Package(
                     "-Xlinker", "--export=sidekickdm_execute",
                     "-Xlinker", "--export=sidekickdm_result_ptr",
                     "-Xlinker", "--export=sidekickdm_result_len",
-                    "-Xlinker", "--export=sidekickdm_result_copy"
+                    "-Xlinker", "--export=sidekickdm_result_copy",
+                    "-Xlinker", "--export=sidekickdm_engine_capabilities"
                 ], .when(platforms: [.wasi]))
             ]
         ),

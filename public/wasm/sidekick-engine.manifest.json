@@ -1,0 +1,7 @@
+{
+  "manifest_version": 1,
+  "protocol_version": 1,
+  "interface_version": 2,
+  "build_id": "20e8b3b4b9191f9351ce79146905fee629b95d5515e1061b7c4cb53a00775bbd",
+  "asset": "sidekick-engine.wasm"
+}

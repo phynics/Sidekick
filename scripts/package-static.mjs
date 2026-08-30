@@ -9,7 +9,8 @@ const requiredFiles = [
   "src/boot.js",
   "src/wasm-engine.js",
   "public/data/demo-encounter.v1.json",
-  "public/wasm/sidekick-engine.wasm"
+  "public/wasm/sidekick-engine.wasm",
+  "public/wasm/sidekick-engine.manifest.json"
 ];
 
 export function packageStaticSite({ root, output = join(root, "dist") }) {

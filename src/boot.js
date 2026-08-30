@@ -1,4 +1,4 @@
-import { loadSidekickEngine } from "./wasm-engine.js";
+import { loadSidekickEngine } from "./wasm-engine.js?v=3";
 
 async function fetchJsonAsset(url, fetcher = globalThis.fetch) {
   const response = await fetcher(url);

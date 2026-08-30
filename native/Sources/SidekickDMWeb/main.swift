@@ -18,6 +18,13 @@ private struct CommandResult: Encodable {
     let error: ErrorPayload?
 }
 
+private struct EngineCapabilities: Encodable {
+    let protocolVersion: Int
+    let interfaceVersion: Int
+    let supportedCommands: [String]
+    let features: [String: Bool]
+}
+
 private nonisolated(unsafe) var store = EncounterStore()
 private nonisolated(unsafe) var outputPointer: UnsafeMutablePointer<UInt8>?
 private nonisolated(unsafe) var outputLength: Int32 = 0
@@ -59,6 +66,21 @@ public func sidekickDMDealloc(_ pointer: UnsafeMutableRawPointer?) { pointer?.de
 public func sidekickDMInitialize() -> Int32 {
     store = EncounterStore()
     publishSnapshot()
+    return 1
+}
+
+@_cdecl("sidekickdm_engine_capabilities")
+public func sidekickDMEngineCapabilities() -> Int32 {
+    publish(EngineCapabilities(
+        protocolVersion: 1,
+        interfaceVersion: SidekickCommandExecutor.engineInterfaceVersion,
+        supportedCommands: SidekickCommandExecutor.supportedCommands.sorted(),
+        features: [
+            "atomic_generation_steps": true,
+            "generation_runs": true,
+            "native_persistence": true
+        ]
+    ))
     return 1
 }
 

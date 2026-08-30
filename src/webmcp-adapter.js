@@ -7,11 +7,25 @@
 
 import { commitCustomCreature, forkExistingCreature, validateCustomCreature } from "./creature-generation.js";
 import { createSimpleHazard, hazardBenchmarks, validateSimpleHazard } from "./hazard-builder.js";
-import { benchmarkFor, CREATURE_ROADMAPS, recommendedBands } from "./creature-builder.js";
+import { benchmarkFor, CREATURE_ROADMAPS, recommendedBands, createEmptyOriginalCreature } from "./creature-builder.js";
 import { projectRunSession } from "./run-session.js";
+import { projectEncounterParticipantSummary } from "./encounter-summary.js";
 
 export const PROTOCOL_VERSION = 1;
 export const TOOL_PREFIX = "sidekickdm_";
+export const REQUIRED_NATIVE_COMMANDS = Object.freeze([
+  "sidekickdm_add_hazard", "sidekickdm_add_existing_hazard", "sidekickdm_add_participant_group",
+  "sidekickdm_add_existing_participant_group", "sidekickdm_apply_generation_step", "sidekickdm_begin_generation",
+  "sidekickdm_cancel_generation", "sidekickdm_create_custom_creature", "sidekickdm_create_simple_hazard",
+  "sidekickdm_finish_generation", "sidekickdm_remove_component", "sidekickdm_resume_generation",
+  "sidekickdm_set_alternative_resolutions", "sidekickdm_set_battlefield_guidance", "sidekickdm_set_cohesion",
+  "sidekickdm_set_encounter_identity", "sidekickdm_set_encounter_packet", "sidekickdm_set_generation_assumptions",
+  "sidekickdm_set_information_visibility", "sidekickdm_set_outcomes", "sidekickdm_set_party_snapshot",
+  "sidekickdm_set_reward_guidance", "sidekickdm_set_running_guidance", "sidekickdm_set_setup",
+  "sidekickdm_set_threat_target", "sidekickdm_undo", "sidekickdm_update_creative_brief", "sidekickdm_update_creature",
+  "sidekickdm_update_custom_creature", "sidekickdm_update_hazard", "sidekickdm_update_participant_group",
+  "sidekickdm_upsert_npc_profile", "sidekickdm_upsert_phase", "sidekickdm_redo"
+]);
 
 const noInput = Object.freeze({
   type: "object",
@@ -29,6 +43,66 @@ const encounterInput = Object.freeze({
 });
 
 const freeformObject = Object.freeze({ type: "object", additionalProperties: true });
+
+const statisticSchema = Object.freeze({ type: ["object", "null"], properties: { band: { type: "string" }, value: { type: "number" } }, required: ["band", "value"], additionalProperties: false });
+const statisticReference = Object.freeze({ $ref: "#/$defs/statistic" });
+const creatureSchema = Object.freeze({
+  type: "object",
+  properties: {
+    object_version: { type: "integer", minimum: 1 }, id: { type: "string", minLength: 1 }, revision: { type: "integer", minimum: 0 },
+    identity: { type: "object", properties: { name: { type: "string", minLength: 1 }, level: { type: "integer", minimum: -1, maximum: 20 }, rarity: { type: "string" }, size: { type: "string" }, traits: { type: "array", items: { type: "string" } }, concept: { type: "string" }, roadmap: { type: ["string", "null"], enum: [...CREATURE_ROADMAPS, null] }, encounter_role: { type: "string" } }, required: ["name", "level", "traits", "concept"], additionalProperties: true },
+    perception: statisticReference,
+    senses: { type: "array", items: { type: "string" } }, languages: { type: "array", items: { type: "string" } }, skills: { type: "object", additionalProperties: { type: "number" } },
+    defenses: { type: "object", properties: { ac: statisticReference, fortitude: statisticReference, reflex: statisticReference, will: statisticReference, hp: statisticReference, immunities: { type: "array", items: { type: "string" } }, weaknesses: { type: "array", items: { type: "string" } }, resistances: { type: "array", items: { type: "string" } } }, required: ["ac", "fortitude", "reflex", "will", "hp"], additionalProperties: true },
+    speeds: { type: "object", additionalProperties: { type: "number" } }, strikes: { type: "array", items: { type: "object", additionalProperties: true } }, abilities: { type: "array", items: { type: "object", additionalProperties: true } },
+    spellcasting_status: { type: "string" }, spellcasting_blocks: { type: "array", items: { type: "object", additionalProperties: true } }, tactics: { type: "string" }, morale: { type: "string" }, provenance: { type: "object", additionalProperties: true }
+  },
+  required: ["id", "identity", "defenses", "strikes", "abilities"],
+  additionalProperties: true
+});
+
+const participationSchema = Object.freeze({
+  type: "object",
+  properties: {
+    mode: { type: "string", enum: ["mandatory", "avoidable", "conditional", "reinforcement"] },
+    condition: { type: ["string", "null"] }
+  },
+  additionalProperties: false
+});
+
+const participantCompositionSchema = Object.freeze({
+  type: "object",
+  properties: {
+    id: { type: "string", minLength: 1 },
+    content_id: { type: "string", minLength: 1 },
+    catalog_entry: freeformObject,
+    creature: creatureSchema,
+    name: { type: "string", minLength: 1 },
+    level: { type: "integer", minimum: -1, maximum: 20 },
+    quantity: { type: "integer", minimum: 1 },
+    adjustment: { type: "string", enum: ["weak", "normal", "elite"] },
+    faction: { type: "string", enum: ["party", "primary_opposition", "secondary_opposition", "allied", "neutral"] },
+    participation: participationSchema,
+    participation_mode: { type: "string", enum: ["mandatory", "avoidable", "conditional", "reinforcement"] },
+    participation_condition: { type: "string" },
+    encounter_role: { type: "string", enum: ["brute", "defender", "skirmisher", "sniper", "controller", "support", "ambusher", "leader", "solo_boss"] },
+    narrative_tier: { type: "string", enum: ["incidental", "supporting", "prominent"] },
+    display_name: { type: "string" },
+    starting_area: { type: "string" },
+    shared_tactics: { type: "string" },
+    morale: { type: "string" }
+  },
+  additionalProperties: false
+});
+
+const hazardCompositionSchema = Object.freeze({
+  type: "object",
+  properties: {
+    id: { type: "string", minLength: 1 }, content_id: { type: "string", minLength: 1 }, catalog_entry: freeformObject, hazard: freeformObject,
+    complexity: { type: "string", enum: ["simple", "complex"] }, participation_mode: { type: "string", enum: ["mandatory", "avoidable", "conditional", "reinforcement"] }, participation_condition: { type: "string" }, placement: { type: "string" }
+  },
+  additionalProperties: false
+});
 
 const packetSections = Object.freeze(["setup", "running_guidance", "outcomes"]);
 const packetInput = Object.freeze({
@@ -79,6 +153,11 @@ const catalogSearchInput = Object.freeze({
   type: "object",
   properties: {
     query: { type: "string" },
+    queries: { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, maxItems: 12 },
+    match_mode: { type: "string", enum: ["all", "any"] },
+    party_level: { type: "integer", minimum: -1, maximum: 30 },
+    remaining_xp: { type: "integer", minimum: 0 },
+    include_budget: { type: "boolean" },
     kind: { type: "string", enum: ["creature", "hazard"] },
     level_min: { type: "integer", minimum: -1, maximum: 30 },
     level_max: { type: "integer", minimum: -1, maximum: 30 },
@@ -96,6 +175,18 @@ const catalogSearchInput = Object.freeze({
     offset: { type: "integer", minimum: 0 }
   },
   additionalProperties: false
+});
+
+const planEncounterInput = Object.freeze({
+  type: "object",
+  properties: { encounter_id: { type: "string", minLength: 1 }, concepts: { type: "array", items: { type: "string", minLength: 1 }, maxItems: 12 }, candidate_count: { type: "integer", minimum: 1, maximum: 12 }, include_hazards: { type: "boolean" } },
+  required: ["encounter_id"], additionalProperties: false
+});
+
+const draftCreatureInput = Object.freeze({
+  type: "object",
+  properties: { name: { type: "string", minLength: 1 }, level: { type: "integer", minimum: -1, maximum: 20 }, concept: { type: "string", minLength: 1 }, role: { type: "string", enum: CREATURE_ROADMAPS }, traits: { type: "array", items: { type: "string" } } },
+  required: ["name", "level", "concept", "role"], additionalProperties: false
 });
 
 const catalogEntryInput = Object.freeze({
@@ -128,7 +219,7 @@ const runMutationProperties = Object.freeze({
 
 const revisionProperties = Object.freeze({
   encounter_id: { type: "string", minLength: 1 },
-  generation_run_id: { type: "string", minLength: 1, description: "The ID returned by sidekickdm_begin_generation. It is required for every Generation Run mutation." },
+  generation_run_id: { type: "string", minLength: 1 },
   expected_encounter_revision: { type: "integer", minimum: 0 },
   expected_brief_revision: { type: "integer", minimum: 0 },
   expected_constraints_revision: { type: "integer", minimum: 0 }
@@ -144,6 +235,12 @@ const packetSectionSchemas = Object.freeze({
   outcomes: { type: "object", properties: { victory: { type: "string" }, partial_success: { type: ["string", "null"], default: null }, failure: { type: ["string", "null"], default: null }, party_retreat: { type: ["string", "null"], default: null }, enemy_surrender: { type: ["string", "null"], default: null }, enemy_escape: { type: ["string", "null"], default: null }, long_term_consequence: { type: ["string", "null"], default: null } }, required: ["victory"], additionalProperties: false }
 });
 
+const generationStepSectionSchemas = Object.freeze({
+  ...packetSectionSchemas,
+  reward_guidance: { type: ["string", "null"] },
+  alternative_resolutions: { type: "array", items: freeformObject }
+});
+
 const packetSectionDefaults = Object.freeze({
   encounter_identity: {},
   setup: { read_aloud: null },
@@ -151,7 +248,22 @@ const packetSectionDefaults = Object.freeze({
   running_guidance: { adjudication_issues: [] },
   cohesion: { theme: "" },
   information_visibility: { immediately_apparent: [], discoverable: [], gm_secret: [] },
-  outcomes: { partial_success: null, failure: null, party_retreat: null, enemy_surrender: null, enemy_escape: null, long_term_consequence: null }
+  outcomes: { partial_success: null, failure: null, party_retreat: null, enemy_surrender: null, enemy_escape: null, long_term_consequence: null },
+  reward_guidance: null,
+  alternative_resolutions: []
+});
+
+const generationStepInput = Object.freeze({
+  type: "object",
+  properties: {
+    ...revisionProperties,
+    step: { type: "string", enum: ["composition", "guidance"] },
+    participants: { type: "array", items: participantCompositionSchema, maxItems: 20 },
+    hazards: { type: "array", items: hazardCompositionSchema, maxItems: 20 },
+    sections: { type: "object", properties: Object.fromEntries(Object.entries(generationStepSectionSchemas).map(([name, schema]) => [name, schema])), additionalProperties: false }
+  },
+  required: ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision", "step"],
+  additionalProperties: false
 });
 
 const generationMutationRequired = (fields) => ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision", ...fields];
@@ -206,8 +318,6 @@ const creativeBriefProperties = Object.freeze({
 
 const readAnnotations = Object.freeze({
   readOnlyHint: true,
-  destructiveHint: false,
-  idempotentHint: true,
   openWorldHint: false
 });
 
@@ -216,12 +326,24 @@ const untrustedAnnotations = Object.freeze({
   untrustedContentHint: true
 });
 
+function containsStatisticReference(schema, visited = new Set()) {
+  if (!schema || typeof schema !== "object" || visited.has(schema)) return false;
+  if (schema === statisticReference) return true;
+  visited.add(schema);
+  return Object.values(schema).some(value => containsStatisticReference(value, visited));
+}
+
+function publishInputSchema(schema) {
+  if (!containsStatisticReference(schema)) return schema;
+  return Object.freeze({ ...schema, $defs: Object.freeze({ statistic: statisticSchema }) });
+}
+
 function definition(name, description, inputSchema, { untrusted = false } = {}) {
   const annotations = untrusted ? untrustedAnnotations : readAnnotations;
   return Object.freeze({
     name,
     description,
-    inputSchema,
+    inputSchema: publishInputSchema(inputSchema),
     // WebMCP implementations in the wild have exposed these hints both on
     // the definition and under annotations. Keep both forms for detection.
     readOnlyHint: true,
@@ -234,10 +356,10 @@ function writeDefinition(name, description, properties, required = [], { destruc
   return Object.freeze({
     name,
     description,
-    inputSchema: { type: "object", properties, required, additionalProperties: false },
+    inputSchema: publishInputSchema({ type: "object", properties, required, additionalProperties: false }),
     readOnlyHint: false,
     untrustedContentHint: true,
-    annotations: { readOnlyHint: false, destructiveHint: destructive, idempotentHint: false, openWorldHint: false, untrustedContentHint: true }
+    annotations: { readOnlyHint: false, destructiveHint: destructive, openWorldHint: false, untrustedContentHint: true }
   });
 }
 
@@ -254,7 +376,9 @@ const READ_TOOL_DEFINITIONS = Object.freeze([
   definition(`${TOOL_PREFIX}get_component`, "Read one Encounter component by ID without exposing engine serialization.", componentInput, { untrusted: true }),
   definition(`${TOOL_PREFIX}get_creature_benchmarks`, "Read the official-style Creature Builder benchmark bands for a level.", creatureBenchmarkInput),
   definition(`${TOOL_PREFIX}get_hazard_benchmarks`, "Read the official-style Hazard Builder benchmark bands for a level and complexity.", hazardBenchmarkInput),
-  definition(`${TOOL_PREFIX}preflight_generation`, "Estimate a Generation Run outline without mutating the Encounter Draft.", preflightInput, { untrusted: true })
+  definition(`${TOOL_PREFIX}preflight_generation`, "Estimate a Generation Run outline without mutating the Encounter Draft.", preflightInput, { untrusted: true }),
+  definition(`${TOOL_PREFIX}plan_encounter`, "Plan opposition options against the active brief and budget without changing the Encounter Draft.", planEncounterInput, { untrusted: true }),
+  definition(`${TOOL_PREFIX}draft_custom_creature`, "Draft a complete benchmarked custom Creature without changing the Encounter Draft.", draftCreatureInput, { untrusted: true })
   ,definition(`${TOOL_PREFIX}list_library`, "List saved encounters or custom creatures in the Sidekick library.", libraryInput, { untrusted: true })
   ,definition(`${TOOL_PREFIX}get_run_state`, "Read the active live encounter state, combatants, initiative, HP, conditions, and recent rolls.", runInput, { untrusted: true })
 ]);
@@ -264,12 +388,13 @@ const WRITE_TOOL_DEFINITIONS = Object.freeze([
   writeDefinition(`${TOOL_PREFIX}set_party_snapshot`, "Set the DM-confirmed effective party level and size before beginning generation.", partySnapshotProperties, ["encounter_id", "expected_encounter_revision", "effective_level", "size"]),
   writeDefinition(`${TOOL_PREFIX}set_threat_target`, "Set the DM-confirmed Threat Target before beginning generation.", threatTargetProperties, ["encounter_id", "expected_encounter_revision", "kind"]),
   writeDefinition(`${TOOL_PREFIX}begin_generation`, "Begin a revision-checked Generation Run after acknowledging DM-owned Content Boundaries.", { ...revisionProperties, content_boundaries_acknowledged: { type: "boolean" }, intent_summary: { type: "string" } }, ["encounter_id", "expected_encounter_revision", "expected_brief_revision", "expected_constraints_revision", "content_boundaries_acknowledged"]),
-  writeDefinition(`${TOOL_PREFIX}add_existing_participant_group`, "Add one complete supported Catalog Creature during an active Generation Run. Pass the generation_run_id returned by sidekickdm_begin_generation.", { ...revisionProperties, content_id: { type: "string", minLength: 1 }, quantity: { type: "integer", minimum: 1 }, adjustment: { type: "string", enum: ["weak", "normal", "elite"] }, faction: { type: "string" }, participation: freeformObject, encounter_role: { type: "string" }, narrative_tier: { type: "string" }, starting_area: { type: "string" }, shared_tactics: { type: "string" }, morale: { type: "string" } }, generationMutationRequired(["content_id"])),
+  writeDefinition(`${TOOL_PREFIX}add_existing_participant_group`, "Add one complete supported Catalog Creature during an active Generation Run. Pass the generation_run_id returned by sidekickdm_begin_generation.", { ...revisionProperties, content_id: { type: "string", minLength: 1 }, quantity: { type: "integer", minimum: 1 }, adjustment: { type: "string", enum: ["weak", "normal", "elite"] }, faction: { type: "string", enum: ["party", "primary_opposition", "secondary_opposition", "allied", "neutral"] }, participation: { type: "object", properties: { mode: { type: "string", enum: ["mandatory", "avoidable", "conditional", "reinforcement"] }, condition: { type: ["string", "null"] } }, additionalProperties: false }, encounter_role: { type: "string", enum: ["brute", "defender", "skirmisher", "sniper", "controller", "support", "ambusher", "leader", "solo_boss"] }, narrative_tier: { type: "string", enum: ["incidental", "supporting", "prominent"] }, display_name: { type: "string" }, starting_area: { type: "string" }, shared_tactics: { type: "string" }, morale: { type: "string" } }, generationMutationRequired(["content_id"])),
+  writeDefinition(`${TOOL_PREFIX}apply_generation_step`, "Apply one validated composition or guidance step as a single Generation Run mutation.", generationStepInput.properties, generationStepInput.required),
   definition(`${TOOL_PREFIX}fork_existing_creature`, "Create a detached Forked Creature draft from a complete supported Catalog Creature while preserving existing spellcasting blocks.", { type: "object", properties: { content_id: { type: "string", minLength: 1 }, id: { type: "string" } }, required: ["content_id"], additionalProperties: false }, { untrusted: true }),
-  definition(`${TOOL_PREFIX}validate_custom_creature`, "Validate an Original or Forked Creature without mutating the Encounter.", { type: "object", properties: { creature: freeformObject }, required: ["creature"], additionalProperties: false }, { untrusted: true }),
-  writeDefinition(`${TOOL_PREFIX}create_custom_creature`, "Validate, embed, and place an Original or Forked Creature atomically.", { ...revisionProperties, creature: freeformObject, quantity: { type: "integer", minimum: 1 }, starting_area: { type: "string" } }, generationMutationRequired(["creature"])),
-  writeDefinition(`${TOOL_PREFIX}update_creature`, "Validate and replace an encounter-embedded Original or Forked Creature and update its Participant Group projection atomically.", { ...revisionProperties, creature: freeformObject }, generationMutationRequired(["creature"])),
-  writeDefinition(`${TOOL_PREFIX}update_custom_creature`, "Backward-compatible alias for update_creature.", { ...revisionProperties, creature: freeformObject }, generationMutationRequired(["creature"])),
+  definition(`${TOOL_PREFIX}validate_custom_creature`, "Validate an Original or Forked Creature without mutating the Encounter.", { type: "object", properties: { creature: creatureSchema }, required: ["creature"], additionalProperties: false }, { untrusted: true }),
+  writeDefinition(`${TOOL_PREFIX}create_custom_creature`, "Validate, embed, and place an Original or Forked Creature atomically.", { ...revisionProperties, creature: creatureSchema, quantity: { type: "integer", minimum: 1 }, starting_area: { type: "string" } }, generationMutationRequired(["creature"])),
+  writeDefinition(`${TOOL_PREFIX}update_creature`, "Validate and replace an encounter-embedded Original or Forked Creature and update its Participant Group projection atomically.", { ...revisionProperties, creature: creatureSchema }, generationMutationRequired(["creature"])),
+  writeDefinition(`${TOOL_PREFIX}update_custom_creature`, "Backward-compatible alias for update_creature.", { ...revisionProperties, creature: creatureSchema }, generationMutationRequired(["creature"])),
   writeDefinition(`${TOOL_PREFIX}upsert_npc_profile`, "Create or update one validated NPC Profile associated with an encounter Participant Group.", { ...revisionProperties, profile: freeformObject }, generationMutationRequired(["profile"])),
   writeDefinition(`${TOOL_PREFIX}add_existing_hazard`, "Add one complete supported Catalog Hazard during an active Generation Run. Pass the generation_run_id returned by sidekickdm_begin_generation.", { ...revisionProperties, content_id: { type: "string", minLength: 1 }, id: { type: "string", minLength: 1 }, participation_mode: { type: "string", enum: ["mandatory", "avoidable", "conditional", "reinforcement"] }, participation_condition: { type: "string" }, placement: { type: "string" }, phase_id: { type: "string", minLength: 1 }, phase_ids: { type: "array", items: { type: "string", minLength: 1 } } }, generationMutationRequired(["content_id"])),
   definition(`${TOOL_PREFIX}validate_simple_hazard`, "Validate a custom Simple Hazard without mutating the Encounter.", { type: "object", properties: { hazard: freeformObject }, required: ["hazard"], additionalProperties: false }, { untrusted: true }),
@@ -288,7 +413,7 @@ const WRITE_TOOL_DEFINITIONS = Object.freeze([
   writeDefinition(`${TOOL_PREFIX}set_alternative_resolutions`, "Set optional structured Alternative Resolutions in the Encounter Packet during an active Generation Run.", { ...revisionProperties, value: { type: "array", items: freeformObject } }, generationMutationRequired(["value"])),
   writeDefinition(`${TOOL_PREFIX}undo`, "Undo the most recent authored mutation or complete finished Generation Run.", { encounter_id: revisionProperties.encounter_id, expected_encounter_revision: revisionProperties.expected_encounter_revision }, ["encounter_id", "expected_encounter_revision"]),
   writeDefinition(`${TOOL_PREFIX}redo`, "Redo the most recently undone mutation.", { encounter_id: revisionProperties.encounter_id, expected_encounter_revision: revisionProperties.expected_encounter_revision }, ["encounter_id", "expected_encounter_revision"])
-  ,writeDefinition(`${TOOL_PREFIX}save_custom_creature`, "Validate and save a creature to the reusable custom creature library without adding it to an encounter.", { creature: freeformObject }, ["creature"])
+  ,writeDefinition(`${TOOL_PREFIX}save_custom_creature`, "Validate and save a creature to the reusable custom creature library without adding it to an encounter.", { creature: creatureSchema }, ["creature"])
   ,writeDefinition(`${TOOL_PREFIX}save_encounter`, "Save the active Encounter Draft to the encounter library.", { encounter_id: { type: "string", minLength: 1 } }, ["encounter_id"])
   ,writeDefinition(`${TOOL_PREFIX}start_run`, "Start or resume live encounter tracking for the active Encounter.", { encounter_id: { type: "string", minLength: 1 } }, ["encounter_id"])
   ,writeDefinition(`${TOOL_PREFIX}set_initiative`, "Set one combatant's initiative in the active live encounter.", { ...runMutationProperties, value: { type: "integer" } }, ["run_id", "expected_run_revision", "combatant_id", "value"])
@@ -584,6 +709,9 @@ function projectReadiness(snapshot, draft) {
   const structuralErrors = array(firstDefined(readiness.structural_errors, readiness.structuralErrors));
   const designWarnings = array(firstDefined(readiness.design_warnings, readiness.designWarnings));
   const reviewState = firstDefined(draft.review_state, draft.reviewState, "needed");
+  const generationStatus = firstDefined(draft.generation?.state, snapshot.generationState, snapshot.generation_state) ?? "idle";
+  const briefPremise = firstDefined(draft.brief?.creative?.premise, draft.brief?.premise);
+  const packetPremise = firstDefined(packet.identity?.premise, draft.packet?.premise);
   let status = readinessStatus(readiness.status);
   if (status === "ready to run" && reviewState === "needed") status = "ready with review needed";
   return {
@@ -591,6 +719,12 @@ function projectReadiness(snapshot, draft) {
     design_warnings: designWarnings,
     missing_required_packet_sections: missing,
     review_state: reviewState,
+    generation_status: generationStatus,
+    structural_status: generationStatus === "interrupted" ? "blocked" : structuralErrors.length ? "incomplete" : "ready",
+    review_status: reviewState,
+    brief_premise: optionalText(briefPremise),
+    packet_premise: optionalText(packetPremise),
+    display_premise: optionalText(firstDefined(packetPremise, briefPremise)),
     status,
     is_structurally_ready: Boolean(firstDefined(readiness.is_structurally_ready, readiness.isStructurallyReady, structuralErrors.length === 0))
   };
@@ -730,6 +864,7 @@ function projectParticipant(group) {
     id: text(group.id),
     content_id: firstDefined(group.content_id, group.contentID) ?? null,
     name: optionalText(group.name),
+    display_name: optionalText(firstDefined(group.display_name, group.displayName)),
     level: optionalNumber(group.level),
     quantity: optionalNumber(group.quantity),
     adjustment: firstDefined(group.adjustment) ?? null,
@@ -751,6 +886,7 @@ function projectHazard(hazard) {
     name: optionalText(hazard.name),
     level: optionalNumber(hazard.level),
     complexity: firstDefined(hazard.complexity) ?? null,
+    xp: optionalNumber(hazard.xp),
     participation: {
       mode: firstDefined(participation.mode) ?? null,
       condition: firstDefined(participation.condition) ?? null
@@ -773,14 +909,18 @@ function projectPhase(phase) {
   };
 }
 
-function projectSummary(snapshot, draft, state) {
+function projectSummary(snapshot, draft, state, catalog = null) {
   const target = draft.brief?.threatTarget ?? draft.brief?.threat_target ?? {};
   const budget = projectBudget(snapshot);
   const readiness = projectReadiness(snapshot, draft);
+  const encounterProjection = projectEncounterParticipantSummary(draft, catalog);
   return {
     encounter_id: optionalText(draft.id),
     title: optionalText(draft.title),
     premise: optionalText(firstDefined(draft.packet?.premise, draft.packetV1?.identity?.premise, draft.packet_v1?.identity?.premise, draft.brief?.premise, draft.brief?.creative?.premise)),
+    brief_premise: optionalText(firstDefined(draft.brief?.creative?.premise, draft.brief?.premise)),
+    packet_premise: optionalText(firstDefined(draft.packetV1?.identity?.premise, draft.packet_v1?.identity?.premise, draft.packet?.premise)),
+    display_premise: optionalText(firstDefined(draft.packetV1?.identity?.premise, draft.packet_v1?.identity?.premise, draft.packet?.premise, draft.brief?.creative?.premise, draft.brief?.premise)),
     party: {
       effective_level: optionalNumber(firstDefined(draft.brief?.party?.effectiveLevel, draft.brief?.party?.effective_level)),
       size: optionalNumber(draft.brief?.party?.size)
@@ -793,13 +933,27 @@ function projectSummary(snapshot, draft, state) {
       avoidable_xp: budget.avoidable_xp,
       conditional_xp: budget.conditional_xp,
       peak_active_xp: budget.peak_active_xp,
-      total_encounter_xp: budget.total_encounter_xp
+      total_encounter_xp: budget.total_encounter_xp,
+      creature_xp: encounterProjection.creatureXP,
+      hazard_xp: encounterProjection.hazardXP,
+      combined_xp: encounterProjection.totalXP
     },
+    enemy_count: encounterProjection.enemyCount,
+    hazard_count: encounterProjection.hazardCount,
+    creature_xp: encounterProjection.creatureXP,
+    hazard_xp: encounterProjection.hazardXP,
+    combined_xp: encounterProjection.totalXP,
+    creature_levels: encounterProjection.levels,
+    hazard_levels: encounterProjection.hazardDetails.map(detail => detail.level),
     participants: array(draft.participantGroups ?? draft.participant_groups).map(projectParticipant),
-    hazards: array(draft.hazards).map(projectHazard),
+    hazards: array(draft.hazards).map(hazard => {
+      const projected = projectHazard(hazard);
+      const detail = encounterProjection.hazardDetails.find(item => String(item.hazard?.id) === projected.id);
+      return { ...projected, xp: detail?.xp ?? projected.xp };
+    }),
     phases: array(draft.structuredPhases ?? draft.structured_phases ?? draft.phases).map(projectPhase),
     phase_budget: projectPhaseBudget(snapshot),
-    readiness: { status: readiness.status, structural_error_count: readiness.structural_errors.length, design_warning_count: readiness.design_warnings.length },
+    readiness: { status: readiness.status, generation_status: readiness.generation_status, structural_status: readiness.structural_status, review_status: readiness.review_status, structural_error_count: readiness.structural_errors.length, design_warning_count: readiness.design_warnings.length },
     review_state: readiness.review_state,
     generation: state.generationRunID ? { id: state.generationRunID, state: firstDefined(draft.generation?.state) ?? null } : null,
     revisions: { encounter_revision: state.encounterRevision, constraints_revision: state.constraintsRevision }
@@ -842,6 +996,20 @@ function catalogFor(options) {
   return options.catalog ?? null;
 }
 
+function nativeCompatibility(engine) {
+  if (!engine || (!Object.prototype.hasOwnProperty.call(engine, "capabilities") && !engine.compatibility)) return null;
+  if (engine.compatibility === "update_required") return { state: "update_required", label: "WebMCP update required", reason: engine.reason ?? "The native engine is out of date." };
+  if (!engine.available) return { state: "unavailable", label: "WebMCP unavailable", reason: engine.reason ?? "The native engine is unavailable." };
+  const capabilities = engine.capabilities;
+  if (Object.prototype.hasOwnProperty.call(engine, "capabilities") && !capabilities) return { state: "update_required", label: "WebMCP update required", reason: "The native engine did not report its capabilities." };
+  const supported = new Set(capabilities?.supportedCommands ?? capabilities?.supported_commands ?? []);
+  const missing = REQUIRED_NATIVE_COMMANDS.filter(command => !supported.has(command));
+  if (capabilities && (Number(capabilities.protocolVersion ?? capabilities.protocol_version) !== PROTOCOL_VERSION || Number(capabilities.interfaceVersion ?? capabilities.interface_version) !== 2 || missing.length)) {
+    return { state: "update_required", label: "WebMCP update required", reason: missing.length ? `The native engine is missing ${missing.join(", ")}.` : "The native engine interface is incompatible." };
+  }
+  return { state: "compatible", label: "WebMCP connected" };
+}
+
 function catalogEntry(catalog, contentID) {
   if (!catalog || typeof catalog.get !== "function") throw Object.assign(new Error("The Sidekick DM Catalog is not available."), { code: "catalog_unavailable" });
   const entry = catalog.get(contentID);
@@ -873,6 +1041,78 @@ function searchCatalog(catalog, input) {
   return result;
 }
 
+const CONCEPT_ALIASES = Object.freeze({
+  draconic: ["dragon"], dragonkin: ["dragon"], cultist: ["humanoid"], cultists: ["humanoid"], bandit: ["humanoid"], bandits: ["humanoid"], guard: ["defender"], guards: ["defender"]
+});
+
+function planEncounter(catalog, draft, snapshot, input = {}) {
+  if (!catalog || typeof catalog.search !== "function") throw Object.assign(new Error("The Sidekick DM Catalog is not available."), { code: "catalog_unavailable" });
+  const partyLevel = number(firstDefined(draft.brief?.party?.effectiveLevel, draft.brief?.party?.effective_level), 1);
+  const target = draft.brief?.threatTarget ?? draft.brief?.threat_target ?? {};
+  const budget = projectBudget(snapshot);
+  const rawConcepts = array(input.concepts).map(value => text(value).trim().toLowerCase()).filter(Boolean);
+  const concepts = rawConcepts.length
+    ? [...new Set(rawConcepts.flatMap(concept => {
+      const terms = concept.split(/[^a-z0-9]+/).filter(token => token.length > 2);
+      return terms.length > 1 ? terms : [concept];
+    }))]
+    : [draft.brief?.creative?.premise, draft.brief?.premise, draft.brief?.creative?.environment, draft.brief?.environment].flatMap(value => text(value).toLowerCase().split(/[^a-z0-9]+/)).filter(token => token.length > 2);
+  const expanded = [...new Set(concepts.flatMap(concept => [concept, ...(CONCEPT_ALIASES[concept] ?? [])]))];
+  const candidates = new Map();
+  const hazards = new Map();
+  const addMatches = (result, target, sourceQuery) => {
+    for (const entry of result.results ?? []) {
+      const item = target.get(entry.content_id) ?? { ...entry, match_reasons: [], matched_concepts: [] };
+      const sourceConcept = concepts.find(concept => concept === sourceQuery || (CONCEPT_ALIASES[concept] ?? []).includes(sourceQuery));
+      const direct = sourceConcept === sourceQuery;
+      const reason = direct ? "direct catalog match" : `usable basis for ${sourceConcept ?? sourceQuery}`;
+      if (!item.match_reasons.includes(reason)) item.match_reasons.push(reason);
+      if (sourceConcept && !item.matched_concepts.includes(sourceConcept)) item.matched_concepts.push(sourceConcept);
+      target.set(entry.content_id, item);
+    }
+  };
+  for (const query of expanded) {
+    const result = catalog.search({ query, kind: "creature", level_min: partyLevel - 4, level_max: partyLevel + 4, limit: Math.min(Number(input.candidate_count ?? 6), 12) });
+    addMatches(result, candidates, query);
+    if (input.include_hazards !== false) addMatches(catalog.search({ query, kind: "hazard", level_min: partyLevel - 4, level_max: partyLevel + 4, limit: Math.min(Number(input.candidate_count ?? 6), 12) }), hazards, query);
+  }
+  const creatureXP = [10, 15, 20, 30, 40, 60, 80, 120, 160];
+  const hazardXP = { simple: [2, 3, 4, 6, 8, 12, 16, 24, 30], complex: [10, 15, 20, 30, 40, 60, 80, 120, 150] };
+  const relativeXP = (table, level, above) => { const relative = Number(level) - partyLevel; return relative < -4 ? 0 : relative > 4 ? above : table[relative + 4]; };
+  const xpFor = level => relativeXP(creatureXP, level, 160);
+  const rank = (items, xp) => [...items.values()].map(entry => {
+    const xpPerCandidate = xp(entry);
+    return { ...entry, xp_per_candidate: xpPerCandidate, ...(entry.kind === "creature" ? { xp_per_creature: xpPerCandidate } : {}), fits_remaining_budget: xpPerCandidate <= Math.max(0, budget.construction_budget - budget.guaranteed_xp) };
+  }).sort((left, right) => right.matched_concepts.length - left.matched_concepts.length || left.xp_per_candidate - right.xp_per_candidate || String(left.name).localeCompare(String(right.name))).slice(0, Math.min(Number(input.candidate_count ?? 6), 12));
+  const ranked = rank(candidates, entry => xpFor(entry.level));
+  const rankedHazards = rank(hazards, entry => relativeXP(hazardXP[entry.hazard_complexity === "complex" ? "complex" : "simple"], entry.level, entry.hazard_complexity === "complex" ? 150 : 30));
+  const unmatched = concepts.filter(concept => !ranked.some(entry => entry.matched_concepts.includes(concept)));
+  const fallbacks = [];
+  if (unmatched.some(concept => ["cultist", "cultists", "bandit", "bandits"].includes(concept))) fallbacks.push({ concept: "cultist", recommendation: "Create a custom humanoid creature or fork a humanoid catalog entry." });
+  if (unmatched.some(concept => ["kobold", "kobolds"].includes(concept))) fallbacks.push({ concept: "kobold", recommendation: "No Kobold entry is bundled. Create a custom creature or choose a goblin as a mechanical basis." });
+  for (const concept of unmatched) if (!fallbacks.some(item => item.concept === concept)) fallbacks.push({ concept, recommendation: "Search by a related trait, environment, or role, or draft a custom creature for this concept." });
+  return { encounter_id: text(draft.id), target_threat: target.kind ?? null, party_level: partyLevel, budget: { construction_budget: budget.construction_budget, guaranteed_xp: budget.guaranteed_xp, remaining_xp: Math.max(0, budget.construction_budget - budget.guaranteed_xp) }, useful_level_range: { minimum: Math.max(-1, partyLevel - 2), maximum: Math.min(20, partyLevel + 2) }, concepts, candidates: ranked, hazards: rankedHazards, unmatched_concepts: unmatched, fallbacks, include_hazards: input.include_hazards !== false };
+}
+
+function draftCustomCreature(input) {
+  const creature = createEmptyOriginalCreature();
+  const level = Number(input.level);
+  const benchmark = benchmarkFor(level);
+  const bands = recommendedBands(input.role);
+  const value = (table, band) => table?.[band]?.minimum ?? table?.[band]?.maximum ?? null;
+  creature.identity = { ...creature.identity, name: input.name, level, concept: input.concept, traits: [...(input.traits ?? [])], roadmap: input.role, encounterRole: input.role };
+  creature.languages = ["Common"];
+  creature.speeds = { land: 25 };
+  creature.tactics = `Use the ${input.role} role to control the encounter space.`;
+  creature.morale = "Withdraw when bloodied or when the objective is secured.";
+  if (benchmark) {
+    creature.perception = { band: bands.perception, value: value(benchmark.perception, bands.perception) };
+    creature.defenses = { ...creature.defenses, ac: { band: bands.ac, value: value(benchmark.ac, bands.ac) }, fortitude: { band: bands.fortitude, value: value(benchmark.saves, bands.fortitude) }, reflex: { band: bands.reflex, value: value(benchmark.saves, bands.reflex) }, will: { band: bands.will, value: value(benchmark.saves, bands.will) }, hp: { band: bands.hp, value: value(benchmark.hp, bands.hp) } };
+    creature.strikes = [{ id: "strike_1", name: "Strike", actionCost: 1, traits: [], attack: { band: bands.attack, value: value(benchmark.attack, bands.attack) }, damage: [{ expression: benchmark.damage?.[bands.damage]?.expression ?? "1d6", type: "" }], effect: "" }];
+  }
+  return { creature, benchmarked_role: input.role, recommended_bands: bands, validation: validateCustomCreature(creature) };
+}
+
 function schemaTypeMatches(value, type) {
   if (type === "null") return value === null;
   if (type === "object") return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -882,19 +1122,30 @@ function schemaTypeMatches(value, type) {
   return typeof value === type;
 }
 
-function validateSchemaValue(value, schema, path) {
+function resolveSchemaReference(schema, rootSchema) {
+  if (!schema?.$ref) return schema;
+  if (!schema.$ref.startsWith("#/$defs/")) throw Object.assign(new Error(`Unsupported schema reference: ${schema.$ref}.`), { code: "invalid_schema" });
+  const definition = rootSchema?.$defs?.[schema.$ref.slice("#/$defs/".length)];
+  if (!definition) throw Object.assign(new Error(`Unknown schema reference: ${schema.$ref}.`), { code: "invalid_schema" });
+  return definition;
+}
+
+function validateSchemaValue(value, schema, path, rootSchema = schema) {
   if (!schema) return;
+  schema = resolveSchemaReference(schema, rootSchema);
   const types = Array.isArray(schema.type) ? schema.type : [schema.type];
   if (types.length && !types.some(type => schemaTypeMatches(value, type))) throw Object.assign(new Error(`${path} has an invalid type.`), { code: "invalid_request", details: { field: path } });
   if (schema.minLength != null && typeof value === "string" && value.length < schema.minLength) throw Object.assign(new Error(`${path} is required.`), { code: "invalid_request", details: { field: path } });
   if (schema.minimum != null && typeof value === "number" && value < schema.minimum) throw Object.assign(new Error(`${path} is below the minimum.`), { code: "invalid_request", details: { field: path } });
   if (schema.maximum != null && typeof value === "number" && value > schema.maximum) throw Object.assign(new Error(`${path} is above the maximum.`), { code: "invalid_request", details: { field: path } });
-  if (schema.enum && !schema.enum.includes(value)) throw Object.assign(new Error(`${path} has an unsupported value.`), { code: "invalid_request", details: { field: path } });
-  if (Array.isArray(value) && schema.items) value.forEach((item, index) => validateSchemaValue(item, schema.items, `${path}[${index}]`));
+  if (schema.minItems != null && Array.isArray(value) && value.length < schema.minItems) throw Object.assign(new Error(`${path} needs at least ${schema.minItems} item${schema.minItems === 1 ? "" : "s"}.`), { code: "invalid_request", details: { field: path } });
+  if (schema.maxItems != null && Array.isArray(value) && value.length > schema.maxItems) throw Object.assign(new Error(`${path} supports at most ${schema.maxItems} items.`), { code: "invalid_request", details: { field: path } });
+  if (schema.enum && !schema.enum.includes(value)) throw Object.assign(new Error(`${path} has an unsupported value.`), { code: "invalid_request", details: { field: path, value, allowed_values: [...schema.enum] } });
+  if (Array.isArray(value) && schema.items) value.forEach((item, index) => validateSchemaValue(item, schema.items, `${path}[${index}]`, schema.items.$defs ? schema.items : rootSchema));
   if (schemaTypeMatches(value, "object") && schema.properties) {
     if (schema.additionalProperties === false) for (const key of Object.keys(value)) if (!Object.hasOwn(schema.properties, key)) throw Object.assign(new Error(`${path}.${key} is not supported.`), { code: "invalid_request", details: { field: `${path}.${key}` } });
     for (const required of schema.required ?? []) if (!Object.hasOwn(value, required)) throw Object.assign(new Error(`${path}.${required} is required.`), { code: "invalid_request", details: { field: required }, ...(required === "generation_run_id" ? { recovery: "Reuse the generation_run_id returned by sidekickdm_begin_generation." } : {}) });
-    for (const [key, child] of Object.entries(schema.properties)) if (Object.hasOwn(value, key)) validateSchemaValue(value[key], child, `${path}.${key}`);
+    for (const [key, child] of Object.entries(schema.properties)) if (Object.hasOwn(value, key)) validateSchemaValue(value[key], child, `${path}.${key}`, child.$defs ? child : rootSchema);
   }
 }
 
@@ -938,9 +1189,15 @@ function packetValue(section, value) {
   return keysToCamel({ ...clone(packetSectionDefaults[section]), ...clone(value) });
 }
 
+function generationSectionValue(section, value) {
+  if (section === "reward_guidance") return value;
+  if (section === "alternative_resolutions") return keysToCamel(value);
+  return packetValue(section, value);
+}
+
 function resolveContext(options) {
   if (options.modelContext !== undefined) return options.modelContext;
-  return globalThis.navigator?.modelContext ?? globalThis.document?.modelContext ?? null;
+  return globalThis.document?.modelContext ?? globalThis.navigator?.modelContext ?? null;
 }
 
 async function disposeLifecycle(modelContext, lifecycle) {
@@ -950,10 +1207,14 @@ async function disposeLifecycle(modelContext, lifecycle) {
   if (lifecycle.owner && lifecycle.ownerHandler && typeof lifecycle.owner.removeEventListener === "function") {
     lifecycle.owner.removeEventListener("pagehide", lifecycle.ownerHandler);
   }
+  if (lifecycle.toolChangeHandler && typeof modelContext?.removeEventListener === "function") {
+    modelContext.removeEventListener("toolchange", lifecycle.toolChangeHandler);
+  }
   for (const handle of [...lifecycle.handles].reverse()) await disposeRegistrationHandle(handle);
   lifecycle.handles.length = 0;
   registrationLifecyclesByContext.delete(modelContext);
   registrationsByContext.delete(modelContext);
+  lifecycle.updateConnection?.({ state: "disconnected", available: false, label: "WebMCP disconnected" });
 }
 
 async function disposeRegistrationHandle(handle) {
@@ -972,19 +1233,45 @@ export function createWebMCPAdapter(options = {}) {
   const catalog = catalogFor(source);
   const getSnapshot = source.getSnapshot ?? (() => source.engine?.snapshot ?? source.snapshot);
   const commandExecutor = source.execute ?? (typeof source.engine?.execute === "function" ? source.engine.execute.bind(source.engine) : null);
+  const engineStatus = nativeCompatibility(source.engine);
+  let connectionStatus = { state: "unavailable", available: false, label: "WebMCP unavailable in this browser" };
+  const connectionListeners = new Set(typeof source.onConnectionChange === "function" ? [source.onConnectionChange] : []);
+  const updateConnection = next => {
+    if (connectionStatus.state === next.state && connectionStatus.label === next.label) return connectionStatus;
+    connectionStatus = Object.freeze({ ...next });
+    for (const listener of connectionListeners) listener(connectionStatus);
+    return connectionStatus;
+  };
+  const registrationResult = status => ({ available: status.available, label: status.label });
+
+  async function refreshConnection(modelContext, lifecycle) {
+    if (lifecycle.disposed) return updateConnection({ state: "disconnected", available: false, label: "WebMCP disconnected" });
+    if (typeof modelContext.getTools !== "function") return updateConnection({ state: "connected", available: true, label: "WebMCP connected" });
+    try {
+      const tools = await modelContext.getTools();
+      const names = new Set((tools ?? []).map(tool => tool?.name));
+      const connected = TOOL_DEFINITIONS.every(definition => names.has(definition.name));
+      return updateConnection(connected
+        ? { state: "connected", available: true, label: "WebMCP connected" }
+        : { state: "disconnected", available: false, label: "WebMCP disconnected" });
+    } catch {
+      return updateConnection({ state: "disconnected", available: false, label: "WebMCP disconnected" });
+    }
+  }
 
   async function readState() {
     return unwrap(typeof getSnapshot === "function" ? await getSnapshot() : getSnapshot);
   }
 
-  async function executeMutation(command, project = (state) => ({ encounter: projectSummary(state.snapshot, requireDraft(state), state) })) {
+  async function executeMutation(command, project = (state) => ({ encounter: projectSummary(state.snapshot, requireDraft(state), state, catalog) })) {
     if (typeof commandExecutor !== "function") throw Object.assign(new Error("The Sidekick DM mutation boundary is unavailable."), { code: "invalid_request" });
     const result = await commandExecutor({ ...command, origin: "webmcp" });
     const next = unwrap(result);
     if (!result?.ok) return envelope(next, undefined, errorPayload(result));
     if (source.engine && result.snapshot) source.engine.snapshot = result.snapshot;
-    if (typeof source.onMutation === "function") await source.onMutation(requireDraft(next), result, command);
-    return envelope(next, project(next, result));
+    const data = project(next, result);
+    if (typeof source.onMutation === "function") await source.onMutation(requireDraft(next), result, command, data);
+    return envelope(next, data);
   }
 
   async function readRun(input) {
@@ -1007,7 +1294,7 @@ export function createWebMCPAdapter(options = {}) {
     return { ...input, ...additions, command: name };
   }
 
-  async function execute(name, input = {}, signal) {
+  async function executeCommand(name, input = {}, signal) {
     let state;
     try {
       state = await readState();
@@ -1020,10 +1307,17 @@ export function createWebMCPAdapter(options = {}) {
       validateMutationPreconditions(name, input, state);
       switch (name) {
         case `${TOOL_PREFIX}get_capabilities`:
-          return envelope(state, capabilities(catalog, state));
+          return envelope(state, {
+            ...capabilities(catalog, state),
+            engine: source.engine ? {
+              build_id: source.engine.buildID ?? source.engine.build_id ?? null,
+              interface_version: source.engine.capabilities?.interfaceVersion ?? source.engine.capabilities?.interface_version ?? null,
+              compatibility: engineStatus?.state === "update_required" ? "update_required" : source.engine.compatibility ?? "unknown"
+            } : { build_id: null, interface_version: null, compatibility: "unknown" }
+          });
         case `${TOOL_PREFIX}get_encounter_summary`:
           checkEncounter(state, input);
-          return envelope(state, projectSummary(state.snapshot, requireDraft(state), state));
+          return envelope(state, projectSummary(state.snapshot, requireDraft(state), state, catalog));
         case `${TOOL_PREFIX}get_encounter_brief`:
           return envelope(state, projectBrief(requireDraft(state)));
         case `${TOOL_PREFIX}get_brief_checklist`:
@@ -1052,6 +1346,11 @@ export function createWebMCPAdapter(options = {}) {
         case `${TOOL_PREFIX}preflight_generation`:
           checkEncounter(state, input);
           return envelope(state, projectPreflight(state.snapshot, requireDraft(state), input));
+        case `${TOOL_PREFIX}plan_encounter`:
+          checkEncounter(state, input);
+          return envelope(state, planEncounter(catalog, requireDraft(state), state.snapshot, input));
+        case `${TOOL_PREFIX}draft_custom_creature`:
+          return envelope(state, draftCustomCreature(input));
         case `${TOOL_PREFIX}list_library`: {
           if (typeof source.getLibrary !== "function") throw Object.assign(new Error("The reusable library is not available."), { code: "library_unavailable" });
           const library = clone(await source.getLibrary());
@@ -1099,11 +1398,38 @@ export function createWebMCPAdapter(options = {}) {
           return await executeMutation(mutationCommand(name, input));
         case `${TOOL_PREFIX}begin_generation`:
           return await executeMutation(mutationCommand(name, input), next => ({ generation_run_id: next.generationRunID, opening_revision: state.encounterRevision, readiness: projectReadiness(next.snapshot, requireDraft(next)) }));
+        case `${TOOL_PREFIX}apply_generation_step`: {
+          if (input.step === "composition" && !array(input.participants).length && !array(input.hazards).length) throw Object.assign(new Error("A composition step must include participants or hazards."), { code: "invalid_request", details: { field: "participants" } });
+          if (input.step === "guidance" && (!input.sections || typeof input.sections !== "object" || Object.keys(input.sections).length === 0)) throw Object.assign(new Error("A guidance step must include at least one packet section."), { code: "invalid_request", details: { field: "sections" } });
+          const participants = array(input.participants).map(item => {
+            const contentID = text(item.content_id ?? item.contentID);
+            const entry = contentID ? catalogEntry(catalog, contentID) : null;
+            return entry ? { ...item, content_id: contentID, catalog_entry: catalogEntryCommand(catalog, entry), name: entry.name, level: entry.level } : { ...item, ...(item.creature ? { creature: keysToCamel(item.creature) } : {}) };
+          });
+          const hazards = array(input.hazards).map(item => ({ ...item, ...(item.hazard ? { hazard: keysToCamel(item.hazard) } : {}) }));
+          return await executeMutation(mutationCommand(name, { ...input, participants, hazards, sections: input.sections ? Object.fromEntries(Object.entries(input.sections).map(([section, value]) => [section, generationSectionValue(section, value)])) : undefined }), next => {
+            const groups = array(next.draft?.participantGroups ?? next.snapshot?.encounter?.participantGroups).map(projectParticipant);
+            const placedHazards = array(next.draft?.hazards ?? next.snapshot?.encounter?.hazards).map(projectHazard);
+            const priorGroups = new Set(array(state.draft?.participantGroups).map(group => text(group.id)));
+            const priorHazards = new Set(array(state.draft?.hazards).map(hazard => text(hazard.id)));
+            const appliedParticipants = groups.filter(group => !priorGroups.has(group.id));
+            const appliedHazards = placedHazards.filter(hazard => !priorHazards.has(hazard.id));
+            const uiTargets = [
+              ...appliedParticipants.map(participant => ({ kind: "participant_group", id: participant.id, label: participant.display_name ?? participant.name })),
+              ...appliedHazards.map(hazard => ({ kind: "hazard", id: hazard.id, label: hazard.name }))
+            ];
+            return { applied: true, step: input.step, participants: appliedParticipants, hazards: appliedHazards, ui_target: uiTargets[0] ?? { kind: "encounter", id: requireDraft(next).id, label: requireDraft(next).title }, ui_targets: uiTargets, readiness: projectReadiness(next.snapshot, requireDraft(next)) };
+          });
+        }
         case `${TOOL_PREFIX}resume_generation`:
           return await executeMutation(mutationCommand(name, input), next => ({ generation_run_id: next.generationRunID, state: next.generationState }));
         case `${TOOL_PREFIX}add_existing_participant_group`: {
           const entry = catalogEntry(catalog, text(input.content_id));
-          return await executeMutation(mutationCommand(name, input, { catalog_entry: catalogEntryCommand(catalog, entry), name: entry.name, level: entry.level }));
+          return await executeMutation(mutationCommand(name, input, { catalog_entry: catalogEntryCommand(catalog, entry), name: entry.name, level: entry.level }), next => {
+            const groups = array(next.draft?.participantGroups ?? next.snapshot?.encounter?.participantGroups);
+            const applied = (input.id ? groups.find(group => group.id === input.id) : [...groups].reverse().find(group => (group.contentID ?? group.content_id) === input.content_id)) ?? null;
+            return { participant: applied ? projectParticipant(applied) : null, encounter: projectSummary(next.snapshot, requireDraft(next), next, catalog), ui_target: applied ? { kind: "participant_group", id: applied.id, label: applied.displayName ?? applied.name } : null };
+          });
         }
         case `${TOOL_PREFIX}fork_existing_creature`: {
           const creature = forkExistingCreature(catalogEntry(catalog, text(input.content_id)), { id: input.id ?? null, origin: "webmcp" });
@@ -1113,12 +1439,20 @@ export function createWebMCPAdapter(options = {}) {
           return envelope(state, validateCustomCreature(keysToCamel(input.creature)));
         case `${TOOL_PREFIX}create_custom_creature`: {
           const creature = commitCustomCreature(keysToCamel(input.creature), { origin: "webmcp" });
-          return await executeMutation(mutationCommand(name, { ...input, creature }));
+          return await executeMutation(mutationCommand(name, { ...input, creature }), next => {
+            const draft = requireDraft(next);
+            const participant = [...array(draft.participantGroups)].reverse().find(group => (group.contentID ?? group.content_id) === `creature/original/${creature.id}/current`);
+            return { participant: participant ? projectParticipant(participant) : null, encounter: projectSummary(next.snapshot, draft, next, catalog), ui_target: participant ? { kind: "participant_group", id: participant.id, label: participant.displayName ?? participant.name } : null };
+          });
         }
         case `${TOOL_PREFIX}update_creature`:
         case `${TOOL_PREFIX}update_custom_creature`: {
           const creature = commitCustomCreature(keysToCamel(input.creature), { origin: "webmcp" });
-          return await executeMutation(mutationCommand(name, { ...input, creature }));
+          return await executeMutation(mutationCommand(name, { ...input, creature }), next => {
+            const draft = requireDraft(next);
+            const participant = array(draft.participantGroups).find(group => (group.contentID ?? group.content_id) === `creature/original/${creature.id}/current`);
+            return { participant: participant ? projectParticipant(participant) : null, encounter: projectSummary(next.snapshot, draft, next, catalog), ui_target: participant ? { kind: "participant_group", id: participant.id, label: participant.displayName ?? participant.name } : null };
+          });
         }
         case `${TOOL_PREFIX}upsert_npc_profile`:
           return await executeMutation(mutationCommand(name, input, { profile: keysToSnake(input.profile) }));
@@ -1129,17 +1463,29 @@ export function createWebMCPAdapter(options = {}) {
             name: entry.name,
             level: entry.level,
             complexity: entry.hazard_complexity ?? "simple"
-          }));
+          }), next => {
+            const hazards = array(next.draft?.hazards ?? next.snapshot?.encounter?.hazards);
+            const applied = (input.id ? hazards.find(hazard => hazard.id === input.id) : [...hazards].reverse().find(hazard => (hazard.contentID ?? hazard.content_id) === input.content_id)) ?? null;
+            return { hazard: applied ? projectHazard(applied) : null, encounter: projectSummary(next.snapshot, requireDraft(next), next, catalog), ui_target: applied ? { kind: "hazard", id: applied.id, label: applied.name } : null };
+          });
         }
         case `${TOOL_PREFIX}validate_simple_hazard`:
           return envelope(state, validateSimpleHazard(keysToCamel(input.hazard)));
         case `${TOOL_PREFIX}create_simple_hazard`: {
           const hazard = createSimpleHazard(keysToCamel(input.hazard));
-          return await executeMutation(mutationCommand(name, { ...input, hazard }));
+          return await executeMutation(mutationCommand(name, { ...input, hazard }), next => {
+            const draft = requireDraft(next);
+            const applied = array(draft.hazards).find(item => item.id === hazard.id);
+            return { hazard: applied ? projectHazard(applied) : null, encounter: projectSummary(next.snapshot, draft, next, catalog), ui_target: applied ? { kind: "hazard", id: applied.id, label: applied.name } : null };
+          });
         }
         case `${TOOL_PREFIX}update_hazard`: {
           const hazard = createSimpleHazard(keysToCamel(input.hazard));
-          return await executeMutation(mutationCommand(name, { ...input, hazard }));
+          return await executeMutation(mutationCommand(name, { ...input, hazard }), next => {
+            const draft = requireDraft(next);
+            const applied = array(draft.hazards).find(item => item.id === hazard.id);
+            return { hazard: applied ? projectHazard(applied) : null, encounter: projectSummary(next.snapshot, draft, next, catalog), ui_target: applied ? { kind: "hazard", id: applied.id, label: applied.name } : null };
+          });
         }
         case `${TOOL_PREFIX}apply_targeted_revision`: {
           const section = text(input.section);
@@ -1181,18 +1527,216 @@ export function createWebMCPAdapter(options = {}) {
     }
   }
 
+  const activityPhase = (name, input = {}) => {
+    if (name.includes("apply_generation_step")) return input.step === "composition" ? "creating monsters" : "writing tactics";
+    if (name.includes("search_catalog") || name.includes("plan_encounter") || name.includes("preflight")) return "finding opposition";
+    if (name.includes("budget") || name.includes("threat_target")) return "balancing";
+    if (name.includes("creature") || name.includes("participant")) return "creating monsters";
+    if (name.includes("battlefield") || name.includes("hazard") || name.includes("phase")) return "designing the battlefield";
+    if (name.includes("running_guidance") || name.includes("cohesion")) return "writing tactics";
+    if (name.includes("information")) return "writing clues";
+    if (name.includes("outcomes") || name.includes("reward") || name.includes("alternative")) return "writing outcomes";
+    if (name.includes("finish") || name.includes("readiness")) return "reviewing";
+    if (name.includes("save")) return "saving";
+    if (name.includes("create_encounter") || name.includes("brief") || name.includes("identity")) return "planning";
+    return "planning";
+  };
+  const activityID = () => globalThis.crypto?.randomUUID?.() ?? `activity_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  const activityTarget = (name, input = {}, state = {}, result = null) => {
+    const authoritative = result?.data?.ui_target ?? result?.ui_target;
+    if (authoritative) return authoritative;
+    const kind = input.component_id ? "component" : input.content_id ? "catalog_entry" : input.encounter_id ? "encounter" : "workspace";
+    const id = input.component_id ?? input.content_id ?? input.encounter_id ?? state.draft?.id ?? null;
+    const encounterLabel = kind === "encounter" && String(id) === String(state.draft?.id) ? state.draft?.title : null;
+    return { kind, id, label: input.display_name ?? input.name ?? encounterLabel ?? input.content_id ?? state.draft?.title ?? "Sidekick" };
+  };
+  const activityPresentation = Object.freeze({
+    sidekickdm_get_capabilities: ["Checking Sidekick compatibility", "Checked Sidekick compatibility"],
+    sidekickdm_get_encounter_summary: ["Reading the encounter overview", "Read the encounter overview"],
+    sidekickdm_get_encounter_brief: ["Reading the creative brief", "Read the creative brief"],
+    sidekickdm_get_brief_checklist: ["Checking the creative brief", "Checked the creative brief"],
+    sidekickdm_get_budget: ["Checking encounter balance", "Checked encounter balance"],
+    sidekickdm_get_readiness: ["Checking encounter readiness", "Checked encounter readiness"],
+    sidekickdm_get_catalog_entry: ["Inspecting a catalog entry", "Inspected the catalog entry"],
+    sidekickdm_get_encounter_packet: ["Reading the encounter packet", "Read the encounter packet"],
+    sidekickdm_get_component: ["Inspecting an encounter element", "Inspected the encounter element"],
+    sidekickdm_get_creature_benchmarks: ["Checking creature benchmarks", "Prepared creature benchmark guidance"],
+    sidekickdm_get_hazard_benchmarks: ["Checking hazard benchmarks", "Prepared hazard benchmark guidance"],
+    sidekickdm_preflight_generation: ["Checking the generation plan", "Checked the generation plan"],
+    sidekickdm_draft_custom_creature: ["Drafting custom opposition", "Prepared a custom creature draft"],
+    sidekickdm_list_library: ["Reading the library", "Read the Sidekick library"],
+    sidekickdm_get_run_state: ["Reading the live encounter", "Read the live encounter"],
+    sidekickdm_create_encounter: ["Creating an encounter", "Created the encounter"],
+    sidekickdm_set_party_snapshot: ["Updating the party", "Updated the party"],
+    sidekickdm_set_threat_target: ["Setting encounter difficulty", "Set encounter difficulty"],
+    sidekickdm_begin_generation: ["Starting encounter generation", "Started encounter generation"],
+    sidekickdm_fork_existing_creature: ["Adapting a catalog creature", "Prepared an editable creature draft"],
+    sidekickdm_validate_custom_creature: ["Checking the creature draft", "Checked the creature draft"],
+    sidekickdm_update_creature: ["Updating creature statistics", "Updated creature statistics"],
+    sidekickdm_update_custom_creature: ["Updating creature statistics", "Updated creature statistics"],
+    sidekickdm_upsert_npc_profile: ["Writing an NPC profile", "Wrote the NPC profile"],
+    sidekickdm_validate_simple_hazard: ["Checking the hazard draft", "Checked the hazard draft"],
+    sidekickdm_update_hazard: ["Updating a hazard", "Updated the hazard"],
+    sidekickdm_remove_component: ["Removing an encounter element", "Removed the encounter element"],
+    sidekickdm_upsert_phase: ["Designing an encounter phase", "Designed the encounter phase"],
+    sidekickdm_set_encounter_identity: ["Defining the encounter", "Named the encounter"],
+    sidekickdm_set_setup: ["Writing the opening", "Wrote the opening"],
+    sidekickdm_set_battlefield_guidance: ["Designing the battlefield", "Designed the battlefield"],
+    sidekickdm_set_running_guidance: ["Writing running tactics", "Wrote running tactics"],
+    sidekickdm_set_cohesion: ["Connecting encounter elements", "Connected encounter elements"],
+    sidekickdm_set_information_visibility: ["Writing information clues", "Wrote information clues"],
+    sidekickdm_set_outcomes: ["Writing encounter outcomes", "Wrote encounter outcomes"],
+    sidekickdm_finish_generation: ["Reviewing the encounter", "Finished encounter generation"],
+    sidekickdm_resume_generation: ["Resuming encounter generation", "Resumed encounter generation"],
+    sidekickdm_cancel_generation: ["Stopping encounter generation", "Stopped encounter generation"],
+    sidekickdm_apply_targeted_revision: ["Revising encounter guidance", "Applied the targeted revision"],
+    sidekickdm_set_generation_assumptions: ["Recording assumptions", "Recorded generation assumptions"],
+    sidekickdm_update_creative_brief: ["Updating the creative brief", "Updated the creative brief"],
+    sidekickdm_set_reward_guidance: ["Writing reward guidance", "Wrote reward guidance"],
+    sidekickdm_set_alternative_resolutions: ["Writing alternative resolutions", "Added alternative resolutions"],
+    sidekickdm_undo: ["Restoring the previous change", "Restored the previous change"],
+    sidekickdm_redo: ["Restoring the repeated change", "Restored the repeated change"],
+    sidekickdm_save_custom_creature: ["Saving the custom creature", "Saved to the creature library"],
+    sidekickdm_save_encounter: ["Saving the encounter", "Saved to the encounter library"],
+    sidekickdm_start_run: ["Starting the live encounter", "Started the live encounter"],
+    sidekickdm_set_initiative: ["Setting initiative", "Set initiative"],
+    sidekickdm_advance_turn: ["Advancing the turn", "Advanced the turn"],
+    sidekickdm_apply_damage: ["Applying damage", "Applied damage"],
+    sidekickdm_apply_healing: ["Applying healing", "Applied healing"],
+    sidekickdm_add_condition: ["Adding a condition", "Added the condition"],
+    sidekickdm_remove_condition: ["Removing a condition", "Removed the condition"],
+    sidekickdm_roll: ["Rolling dice", "Rolled the dice"]
+  });
+  const activitySummary = (name, input = {}, status = "started", result = null, target = null) => {
+    const subject = target?.label ?? input.display_name ?? input.name ?? input.content_id ?? "the encounter";
+    if (status === "failed") return `Needs attention · ${subject}`;
+    const data = result?.data ?? {};
+    const item = data.participant ?? data.hazard ?? null;
+    const authoritativeItem = item ?? data.encounter?.hazards?.find?.(hazard => String(hazard.id) === String(target?.id));
+    if (status === "completed" && ["sidekickdm_create_simple_hazard", "sidekickdm_add_existing_hazard"].includes(name)) {
+      const label = authoritativeItem?.name ?? subject;
+      return `Added ${label}${Number.isFinite(Number(authoritativeItem?.xp)) ? ` · +${Number(authoritativeItem.xp)} XP` : ""}`;
+    }
+    if (status === "completed" && name === "sidekickdm_create_custom_creature") return `Added ${authoritativeItem?.display_name ?? authoritativeItem?.name ?? subject}`;
+    if (status === "canceled" && !name.includes("cancel_generation")) return `Canceled ${name.replace("sidekickdm_", "").replaceAll("_", " ")}`;
+    if (name.includes("begin_generation")) return status === "completed" ? "Started encounter generation" : "Starting encounter generation";
+    if (name.includes("finish_generation")) return status === "completed" ? "Finished encounter generation" : "Reviewing the encounter";
+    if (name.includes("cancel_generation")) return status === "canceled" ? "Stopped encounter generation" : "Stopping encounter generation";
+    if (name.includes("apply_generation_step")) {
+      const count = array(data.participants).length + array(data.hazards).length;
+      return status === "completed" ? input.step === "composition" ? `Added ${count} encounter element${count === 1 ? "" : "s"}` : "Wrote encounter guidance" : input.step === "composition" ? "Building the encounter roster" : "Writing encounter guidance";
+    }
+    if (name.includes("add_existing_participant")) return status === "completed" ? `Added ${subject}` : `Adding ${subject}`;
+    const presentation = activityPresentation[name];
+    if (presentation) return presentation[status === "completed" ? 1 : 0];
+    if (name.includes("set_") || name.includes("update_")) return status === "completed" ? `Updated ${subject}` : `Updating ${subject}`;
+    if (name.includes("save_")) return status === "completed" ? `Saved ${subject}` : `Saving ${subject}`;
+    if (name.includes("plan_encounter")) {
+      const creatureCount = result?.data?.candidates?.length ?? null;
+      const hazardCount = result?.data?.hazards?.length ?? null;
+      if (status !== "completed") return "Finding encounter options";
+      if (creatureCount === 0 && hazardCount === 0) return "No catalog matches · Drafting custom opposition";
+      if (creatureCount === 0 && hazardCount > 0) return `Found ${hazardCount} hazard option${hazardCount === 1 ? "" : "s"}`;
+      return `Found ${creatureCount == null ? "opposition options" : `${creatureCount} opposition option${creatureCount === 1 ? "" : "s"}`}`;
+    }
+    if (name.includes("search_catalog")) {
+      const count = result?.data?.results?.length ?? null;
+      const kind = input.kind === "hazard" || input.include_hazards && input.kind !== "creature" ? "hazard" : "opposition";
+      if (status === "completed" && count === 0) return kind === "hazard" ? "No matching hazards found · Creating custom hazards" : "No matching opposition found · Creating custom creatures";
+      return status === "completed" ? `Found ${count == null ? `${kind} options` : `${count} ${kind} option${count === 1 ? "" : "s"}`}` : `Finding ${kind} options`;
+    }
+    return status === "completed" ? `Finished work on ${subject}` : `Working on ${subject}`;
+  };
+  const activityPreview = (name, status, result = null) => {
+    if (status !== "completed") return null;
+    const data = result?.data;
+    if (!data) return null;
+    if (name === "sidekickdm_draft_custom_creature" || name === "sidekickdm_fork_existing_creature") {
+      const creature = data.creature ?? data.draft ?? data;
+      return { kind: "creature", title: creature.identity?.name ?? "Custom creature draft", summary: `Level ${creature.identity?.level ?? "?"} · ${creature.identity?.encounter_role ?? creature.identity?.roadmap ?? "custom role"}`, note: "Preview only · the encounter has not changed" };
+    }
+    if (name === "sidekickdm_get_creature_benchmarks") return { kind: "guidance", title: `Level ${data.level ?? "?"} creature guidance`, summary: "Benchmark bands are ready for comparison.", note: "Reference only · the encounter has not changed" };
+    if (name === "sidekickdm_get_hazard_benchmarks") return { kind: "guidance", title: `Level ${data.level ?? "?"} hazard guidance`, summary: `${data.complexity ?? "Simple"} hazard benchmarks are ready.`, note: "Reference only · the encounter has not changed" };
+    if (name === "sidekickdm_preflight_generation" || name === "sidekickdm_plan_encounter") {
+      const creatureCount = data.candidates?.length ?? 0;
+      const hazardCount = data.hazards?.length ?? 0;
+      const optionCount = creatureCount + hazardCount;
+      return { kind: "plan", title: "Encounter plan preview", summary: `${optionCount} catalog option${optionCount === 1 ? "" : "s"} · ${data.budget?.construction_budget ?? data.construction_budget ?? "?"} XP budget`, note: "Preview only · the encounter has not changed" };
+    }
+    return null;
+  };
+  const activityDetail = (name, status, result = null, error = null) => {
+    if (status === "failed") return error?.message ?? null;
+    if (status === "canceled") return "Opening encounter restored.";
+    const data = result?.data ?? {};
+    const item = data.participant ?? data.hazard ?? null;
+    if (item) {
+      const facts = [];
+      if (item.level != null) facts.push(`Level ${item.level}`);
+      if (item.adjustment && item.adjustment !== "normal") facts.push(String(item.adjustment).replace(/^./, letter => letter.toUpperCase()));
+      if (item.faction) facts.push(String(item.faction).replaceAll("_", " "));
+      if (item.encounter_role) facts.push(String(item.encounter_role).replaceAll("_", " "));
+      if (item.participation?.mode) facts.push(item.participation.mode);
+      return facts.join(" · ") || null;
+    }
+    if (name.includes("search_catalog") || name.includes("plan_encounter")) {
+      const count = data.results?.length ?? data.candidates?.length;
+      if (count === 0) return "No direct match in the bundled catalog.";
+      if (count != null) return `${count} catalog option${count === 1 ? "" : "s"} reviewed.`;
+    }
+    if (name.includes("save_")) return "Available from the Library.";
+    return data.detail ?? result?.detail ?? null;
+  };
+
+  async function execute(name, input = {}, signal) {
+    const eventID = activityID();
+    const phase = activityPhase(name, input);
+    const runID = input?.generation_run_id ?? null;
+    const emit = (status, state, error = null, result = null) => {
+      const target = activityTarget(name, input, state, result);
+      const event = { event_id: eventID, tool_name: name, generation_run_id: runID ?? state?.generationRunID ?? null, timestamp: new Date().toISOString(), status, phase, encounter_label: state?.draft?.title ?? null, target_label: target.label, target, ui_target: target, summary: activitySummary(name, input, status, result, target), detail: activityDetail(name, status, result, error), preview: activityPreview(name, status, result), ...(error ? { error } : {}) };
+      if (typeof source.onToolActivity === "function") source.onToolActivity(event);
+      return event;
+    };
+    let preflightState = {};
+    try {
+      preflightState = await readState();
+      if (signal?.aborted) throw Object.assign(new Error("The WebMCP registration is no longer active."), { code: "invalid_request" });
+      validateToolInput(name, input);
+      validateMutationPreconditions(name, input, preflightState);
+    } catch (error) {
+      const failed = emit(signal?.aborted ? "canceled" : "failed", preflightState, errorPayload(error));
+      const result = envelope(preflightState, undefined, errorPayload(error));
+      return { ...result, activity: { ...failed, started_at: failed.timestamp } };
+    }
+    const started = emit("started", preflightState);
+    const result = await executeCommand(name, input, signal);
+    const state = await readState().catch(() => ({}));
+    const finished = emit(result?.ok ? (name === `${TOOL_PREFIX}cancel_generation` ? "canceled" : "completed") : (signal?.aborted ? "canceled" : "failed"), state, result?.error ?? null, result);
+    return { ...result, activity: { ...finished, started_at: started.timestamp } };
+  }
+
   async function register() {
+    if (engineStatus?.state === "update_required") return registrationResult(updateConnection({ state: "update_required", available: false, label: engineStatus.label }));
+    if (engineStatus?.state === "unavailable") return registrationResult(updateConnection({ state: "unavailable", available: false, label: engineStatus.label }));
     const modelContext = resolveContext(source);
-    if (!modelContext) return { available: false, label: "WebMCP unavailable in this browser" };
+    if (!modelContext) return registrationResult(updateConnection({ state: "unavailable", available: false, label: "WebMCP unavailable in this browser" }));
     const registerTool = modelContext.registerTool ?? modelContext.addTool;
-    if (typeof registerTool !== "function") return { available: false, label: "WebMCP detected · adapter pending" };
+    if (typeof registerTool !== "function") return registrationResult(updateConnection({ state: "unavailable", available: false, label: "WebMCP detected · adapter pending" }));
     const existing = registrationsByContext.get(modelContext);
-    if (existing) return existing;
+    if (existing) {
+      const result = await existing;
+      updateConnection({ state: result.available ? "connected" : "disconnected", ...result });
+      return result;
+    }
+    updateConnection({ state: "connecting", available: false, label: "WebMCP connecting" });
     const lifecycle = {
       abortController: typeof AbortController === "function" ? new AbortController() : null,
       handles: [],
       owner: source.registrationOwner ?? (source.modelContext === undefined ? globalThis.document : null),
       ownerHandler: null,
+      toolChangeHandler: null,
+      updateConnection,
       disposed: false
     };
     registrationLifecyclesByContext.set(modelContext, lifecycle);
@@ -1208,15 +1752,20 @@ export function createWebMCPAdapter(options = {}) {
             ...definition,
             execute: (input, signal) => execute(definition.name, input, signal ?? lifecycle.abortController?.signal),
             signal: lifecycle.abortController?.signal
-          });
+          }, { signal: lifecycle.abortController?.signal });
           if (handle && lifecycle.disposed) await disposeRegistrationHandle(handle);
           else if (handle) lifecycle.handles.push(handle);
         }
-        return lifecycle.disposed ? { available: false, label: "WebMCP disconnected" } : { available: true, label: "WebMCP connected" };
+        if (lifecycle.disposed) return registrationResult(updateConnection({ state: "disconnected", available: false, label: "WebMCP disconnected" }));
+        if (typeof modelContext.addEventListener === "function") {
+          lifecycle.toolChangeHandler = () => { void refreshConnection(modelContext, lifecycle); };
+          modelContext.addEventListener("toolchange", lifecycle.toolChangeHandler);
+        }
+        return registrationResult(await refreshConnection(modelContext, lifecycle));
       } catch (error) {
         await disposeLifecycle(modelContext, lifecycle);
         console.warn("Sidekick DM could not register WebMCP tools", error);
-        return { available: false, label: "WebMCP unavailable · human mode active" };
+        return registrationResult(updateConnection({ state: "unavailable", available: false, label: "WebMCP unavailable · human mode active" }));
       }
     })();
     registrationsByContext.set(modelContext, registration);
@@ -1229,12 +1778,19 @@ export function createWebMCPAdapter(options = {}) {
   async function unregister() {
     const modelContext = resolveContext(source);
     const lifecycle = modelContext && registrationLifecyclesByContext.get(modelContext);
-    if (!lifecycle) return { available: false, label: "WebMCP not registered" };
+    if (!lifecycle) return registrationResult(updateConnection({ state: "disconnected", available: false, label: "WebMCP not registered" }));
     await disposeLifecycle(modelContext, lifecycle);
     return { available: false, label: "WebMCP disconnected" };
   }
 
-  return Object.freeze({ execute, register, unregister, dispose: unregister, toolDefinitions: () => TOOL_DEFINITIONS });
+  function onConnectionChange(listener) {
+    if (typeof listener !== "function") throw new TypeError("A WebMCP connection listener is required.");
+    connectionListeners.add(listener);
+    listener(connectionStatus);
+    return () => connectionListeners.delete(listener);
+  }
+
+  return Object.freeze({ execute, register, unregister, dispose: unregister, getConnectionStatus: () => connectionStatus, onConnectionChange, toolDefinitions: () => TOOL_DEFINITIONS });
 }
 
 export async function registerWebMCP(options = {}) {

@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { CatalogIndex } from "../src/catalog-index.js";
 import { createEmptyOriginalCreature } from "../src/creature-builder.js";
-import { createWebMCPAdapter, toolDefinitions } from "../src/webmcp-adapter.js";
+import { createWebMCPAdapter, REQUIRED_NATIVE_COMMANDS, toolDefinitions } from "../src/webmcp-adapter.js";
 import { applyRunAction, createRunSession, projectRunSession } from "../src/run-session.js";
 
 const catalogFixture = {
@@ -297,7 +297,8 @@ test("returns compact version 1 projections with current revisions", async () =>
   const catalog = new CatalogIndex(catalogFixture);
   const adapter = createWebMCPAdapter({ snapshot: snapshot(), catalog });
   const capabilities = await adapter.execute("sidekickdm_get_capabilities");
-  assert.deepEqual(capabilities, {
+  const { activity, ...capabilitiesWithoutActivity } = capabilities;
+  assert.deepEqual(capabilitiesWithoutActivity, {
     protocol_version: 1,
     encounter_revision: 4,
     brief_revision: 3,
@@ -318,19 +319,37 @@ test("returns compact version 1 projections with current revisions", async () =>
         live_encounter_tracking: true
       },
       catalog: { fixture_version: 1, party_level_focus: [] },
-      active_encounter: { encounter_id: "enc_test", title: "The Bell Beneath Blackwater", encounter_revision: 4, brief_revision: 3, constraints_revision: 2 }
+      active_encounter: { encounter_id: "enc_test", title: "The Bell Beneath Blackwater", encounter_revision: 4, brief_revision: 3, constraints_revision: 2 },
+      engine: { build_id: null, interface_version: null, compatibility: "unknown" }
     }
   });
+  assert.equal(activity.tool_name, "sidekickdm_get_capabilities");
+  assert.equal(activity.status, "completed");
+  assert.equal(activity.phase, "planning");
+  assert.equal(typeof activity.event_id, "string");
   const brief = await adapter.execute("sidekickdm_get_encounter_brief");
   assert.equal(brief.data.party.effective_level, 5);
   assert.equal(brief.data.creative.environment, "Flooded ruin.");
   const summary = await adapter.execute("sidekickdm_get_encounter_summary", { encounter_id: "enc_test" });
   assert.equal(summary.data.participants[0].quantity, 2);
+  assert.equal(summary.data.enemy_count, 2);
+  assert.equal(summary.data.creature_xp, 80);
+  assert.equal(summary.data.hazard_xp, 0);
+  assert.equal(summary.data.combined_xp, 80);
   assert.equal(summary.data.readiness.status, "ready with warnings");
   assert.deepEqual(summary.data.revisions, { encounter_revision: 4, constraints_revision: 2 });
   const budget = await adapter.execute("sidekickdm_get_budget");
   assert.equal(budget.data.construction_budget, 150);
   assert.deepEqual(budget.data.phase_budget.per_phase, []);
+});
+
+test("exposes individual hazard XP in the encounter summary", async () => {
+  const value = snapshot();
+  value.encounter.hazards = [{ id: "haz_bell", contentID: "hazard/test/bell-snare/current", name: "Bell Snare", level: 4, complexity: "simple", participation: { mode: "mandatory" }, placement: "East pool" }];
+  const adapter = createWebMCPAdapter({ snapshot: value, catalog: new CatalogIndex(catalogFixture) });
+  const summary = await adapter.execute("sidekickdm_get_encounter_summary", { encounter_id: "enc_test" });
+  assert.equal(summary.data.hazard_xp, 6);
+  assert.equal(summary.data.hazards[0].xp, 6);
 });
 
 test("projects phase budgets and nested XP categories in the read budget", async () => {
@@ -356,6 +375,11 @@ test("keeps catalog reads compact, detailed, and untrusted through tool hints", 
   const entry = await adapter.execute("sidekickdm_get_catalog_entry", { content_id: "creature/test/bog-strider/current" });
   assert.equal(entry.ok, true);
   assert.equal(entry.data.detail.tactics, "Circle isolated targets.");
+  const contextual = await adapter.execute("sidekickdm_search_catalog", { queries: ["bog", "skirmisher"], match_mode: "all", kind: "creature", party_level: 5, remaining_xp: 40, include_budget: true });
+  assert.equal(contextual.ok, true);
+  assert.equal(contextual.data.results[0].xp_at_party_level, 40);
+  assert.equal(contextual.data.results[0].fits_remaining_budget, true);
+  assert.ok(contextual.data.results[0].match_reasons.includes("trait match") || contextual.data.results[0].match_reasons.includes("role match"));
 });
 
 test("maps expected domain failures to structured envelopes", async () => {
@@ -384,6 +408,20 @@ test("feature detection and registration are idempotent per model context", asyn
   assert.equal(registered.length, toolDefinitions().length);
   const result = await registered[1].execute({ encounter_id: "enc_test" });
   assert.equal(result.ok, true);
+});
+
+test("refuses WebMCP registration when the native engine is stale or incomplete", async () => {
+  const modelContext = { async registerTool() { throw new Error("must not register stale tools"); } };
+  const stale = createWebMCPAdapter({
+    engine: { available: false, compatibility: "update_required", reason: "missing command" },
+    snapshot: snapshot(), modelContext
+  });
+  assert.deepEqual(await stale.register(), { available: false, label: "WebMCP update required" });
+  const incomplete = createWebMCPAdapter({
+    engine: { available: true, compatibility: "compatible", capabilities: { protocolVersion: 1, interfaceVersion: 2, supportedCommands: ["sidekickdm_begin_generation"] } },
+    snapshot: snapshot(), modelContext
+  });
+  assert.deepEqual(await incomplete.register(), { available: false, label: "WebMCP update required" });
 });
 
 test("exposes custom-library and live-run workflows without a Generation Run", async () => {
@@ -458,6 +496,47 @@ test("registration binds tool handles and execution signals to the adapter lifec
   assert.deepEqual(await adapter.unregister(), { available: false, label: "WebMCP not registered" });
 });
 
+test("connection status follows registered Sidekick tools and later tool changes", async () => {
+  const registered = new Map();
+  const listeners = new Map();
+  const statuses = [];
+  const modelContext = {
+    async registerTool(definition) { registered.set(definition.name, definition); },
+    async getTools() { return [...registered.values()].map(({ name }) => ({ name })); },
+    addEventListener(name, handler) { listeners.set(name, handler); },
+    removeEventListener(name) { listeners.delete(name); }
+  };
+  const adapter = createWebMCPAdapter({
+    snapshot: snapshot(),
+    catalog: new CatalogIndex(catalogFixture),
+    modelContext,
+    onConnectionChange: status => statuses.push(status)
+  });
+
+  await adapter.register();
+  assert.equal(statuses.at(-1).state, "connected");
+  assert.equal(statuses.at(-1).available, true);
+  assert.ok(listeners.has("toolchange"));
+
+  registered.clear();
+  listeners.get("toolchange")();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(statuses.at(-1), { state: "disconnected", available: false, label: "WebMCP disconnected" });
+
+  await adapter.unregister();
+  assert.equal(listeners.has("toolchange"), false);
+});
+
+test("does not report WebMCP connected when registered tools cannot be enumerated", async () => {
+  const modelContext = {
+    async registerTool() {},
+    async getTools() { throw new Error("connection lost"); }
+  };
+  const adapter = createWebMCPAdapter({ snapshot: snapshot(), modelContext });
+  assert.deepEqual(await adapter.register(), { available: false, label: "WebMCP disconnected" });
+  assert.deepEqual(adapter.getConnectionStatus(), { state: "disconnected", available: false, label: "WebMCP disconnected" });
+});
+
 test("write tools route semantic commands through the shared engine and persist the resulting snapshot", async () => {
   const catalog = new CatalogIndex(catalogFixture);
   const commands = [];
@@ -526,4 +605,110 @@ test("keeps every documented WebMCP tool registered and critical schemas contrac
   assert.equal(schema("sidekickdm_set_generation_assumptions").properties.generation_run_id.type, "string");
   assert.equal(schema("sidekickdm_set_generation_assumptions").properties.expected_brief_revision.type, "integer");
   assert.deepEqual(schema("sidekickdm_resume_generation").required, ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision"]);
+});
+
+test("publishes only resolvable local JSON Schema references", () => {
+  const broken = [];
+  const visit = (schema, root, path) => {
+    if (!schema || typeof schema !== "object") return;
+    if (typeof schema.$ref === "string" && schema.$ref.startsWith("#/$defs/")) {
+      const name = schema.$ref.slice("#/$defs/".length);
+      if (!root.$defs?.[name]) broken.push(`${path}: ${schema.$ref}`);
+    }
+    for (const [key, value] of Object.entries(schema)) visit(value, root, `${path}.${key}`);
+  };
+  for (const definition of toolDefinitions()) visit(definition.inputSchema, definition.inputSchema, definition.name);
+  assert.deepEqual(broken, []);
+});
+
+test("keeps the registered WebMCP descriptor set within the browser limit", () => {
+  const descriptors = toolDefinitions().map(definition => ({
+    name: definition.name,
+    description: definition.description,
+    inputSchema: definition.inputSchema,
+    annotations: definition.annotations
+  }));
+  assert.ok(Buffer.byteLength(JSON.stringify(descriptors)) < 65_536);
+});
+
+test("plans catalog opposition, explains empty concepts, and drafts benchmarked custom creatures", async () => {
+  const catalog = new CatalogIndex(catalogFixture);
+  const adapter = createWebMCPAdapter({ snapshot: snapshot(), catalog });
+  const plan = await adapter.execute("sidekickdm_plan_encounter", { encounter_id: "enc_test", concepts: ["cultists", "swamp"], candidate_count: 4 });
+  assert.equal(plan.ok, true);
+  assert.equal(plan.data.candidates[0].name, "Bog Strider");
+  assert.ok(plan.data.candidates[0].match_reasons.includes("direct catalog match"));
+  assert.ok(plan.data.unmatched_concepts.includes("cultists"));
+  assert.ok(plan.data.fallbacks.some(item => item.concept === "cultist"));
+  assert.equal(plan.data.budget.remaining_xp, 60);
+
+  const phrasePlan = await adapter.execute("sidekickdm_plan_encounter", { encounter_id: "enc_test", concepts: ["draconic cultists"], include_hazards: true });
+  assert.deepEqual(phrasePlan.data.concepts, ["draconic", "cultists"]);
+  assert.ok(phrasePlan.data.unmatched_concepts.includes("draconic"));
+  assert.ok(phrasePlan.data.unmatched_concepts.includes("cultists"));
+  assert.ok(Array.isArray(phrasePlan.data.hazards));
+
+  const draft = await adapter.execute("sidekickdm_draft_custom_creature", { name: "Handoff Cultist", level: 5, concept: "A courier guarding a draconic relic.", role: "controller", traits: ["humanoid", "occult"] });
+  assert.equal(draft.ok, true);
+  assert.equal(draft.data.creature.identity.name, "Handoff Cultist");
+  assert.equal(draft.data.creature.identity.roadmap, "controller");
+  assert.equal(draft.data.creature.defenses.hp.band, "low");
+  assert.equal(draft.data.creature.strikes[0].attack.band, "moderate");
+  assert.equal(draft.data.validation.structuralErrors.length, 0);
+});
+
+test("publishes strict generation-step schemas and returns activity for success and failure", async () => {
+  const definitions = new Map(toolDefinitions().map(definition => [definition.name, definition]));
+  const plan = definitions.get("sidekickdm_plan_encounter");
+  const draft = definitions.get("sidekickdm_draft_custom_creature");
+  const step = definitions.get("sidekickdm_apply_generation_step");
+  assert.equal(plan.readOnlyHint, true);
+  assert.equal(draft.readOnlyHint, true);
+  assert.equal(step.readOnlyHint, false);
+  assert.deepEqual(step.inputSchema.properties.step.enum, ["composition", "guidance"]);
+  assert.deepEqual(step.inputSchema.properties.sections.properties.setup.required, ["trigger", "battlefield_description", "starting_positions", "awareness_state", "immediate_features"]);
+  assert.deepEqual(step.inputSchema.required, ["encounter_id", "generation_run_id", "expected_encounter_revision", "expected_constraints_revision", "step"]);
+  assert.deepEqual(definitions.get("sidekickdm_add_existing_participant_group").inputSchema.properties.faction.enum, ["party", "primary_opposition", "secondary_opposition", "allied", "neutral"]);
+  assert.deepEqual(definitions.get("sidekickdm_add_existing_participant_group").inputSchema.properties.participation.properties.mode.enum, ["mandatory", "avoidable", "conditional", "reinforcement"]);
+
+  const events = [];
+  const adapter = createWebMCPAdapter({ snapshot: snapshot(), catalog: new CatalogIndex(catalogFixture), onToolActivity: event => events.push(event) });
+  const success = await adapter.execute("sidekickdm_get_budget");
+  assert.equal(success.ok, true);
+  assert.equal(success.activity.status, "completed");
+  assert.equal(success.activity.encounter_label, "The Bell Beneath Blackwater");
+  assert.equal(success.activity.ui_target.kind, "workspace");
+  assert.deepEqual(events.map(event => event.status), ["started", "completed"]);
+  const failed = await adapter.execute("sidekickdm_add_existing_participant_group", { encounter_id: "enc_test", generation_run_id: "run_missing", expected_encounter_revision: 4, expected_constraints_revision: 2, content_id: "creature/test/bog-strider/current", faction: "invalid" });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.activity.status, "failed");
+  assert.match(failed.activity.summary, /^Needs attention ·/);
+  assert.equal(failed.activity.started_at, failed.activity.timestamp);
+  assert.equal(events.at(-1).status, "failed");
+});
+
+test("presents concrete read, empty-hazard, and preview activity", async () => {
+  const events = [];
+  const adapter = createWebMCPAdapter({ snapshot: snapshot(), catalog: new CatalogIndex(catalogFixture), onToolActivity: event => events.push(event) });
+
+  const summary = await adapter.execute("sidekickdm_get_encounter_summary", { encounter_id: "enc_test" });
+  assert.equal(summary.activity.summary, "Read the encounter overview");
+  assert.equal(summary.activity.target_label, "The Bell Beneath Blackwater");
+  assert.doesNotMatch(summary.activity.summary, /^Completed /);
+
+  const hazards = await adapter.execute("sidekickdm_search_catalog", { query: "reality fray", kind: "hazard" });
+  assert.equal(hazards.data.results.length, 0);
+  assert.equal(hazards.activity.summary, "No matching hazards found · Creating custom hazards");
+
+  const plan = await adapter.execute("sidekickdm_plan_encounter", { encounter_id: "enc_test", concepts: ["cheliax", "hellknight"], include_hazards: true });
+  assert.equal(plan.data.candidates.length, 0);
+  assert.equal(plan.data.hazards.length, 0);
+  assert.equal(plan.activity.summary, "No catalog matches · Drafting custom opposition");
+  assert.equal(plan.activity.preview.summary, "0 catalog options · 150 XP budget");
+
+  const draft = await adapter.execute("sidekickdm_draft_custom_creature", { name: "Wrong-Eyed Herald", level: 11, concept: "A swamp guide changed by broken reality.", role: "controller", traits: ["humanoid", "occult"] });
+  assert.equal(draft.activity.preview.title, "Wrong-Eyed Herald");
+  assert.match(draft.activity.preview.note, /encounter has not changed/);
+  assert.equal(draft.encounter_revision, 4);
+  assert.ok(events.some(event => event.preview?.kind === "creature"));
 });

@@ -35,6 +35,37 @@ Successful response:
 }
 ```
 
+Every response also includes a compact `activity` object describing the completed tool call. The adapter emits the same object with `status: "started"` before execution and `status: "completed"`, `"failed"`, or `"canceled"` afterward:
+
+```json
+{
+  "event_id": "activity_...",
+  "tool_name": "sidekickdm_plan_encounter",
+  "generation_run_id": "run_...",
+  "timestamp": "2026-08-30T00:00:00.000Z",
+  "status": "completed",
+  "phase": "finding opposition",
+  "encounter_label": "The Bell Beneath Blackwater",
+  "target_label": "The Bell",
+  "target": { "kind": "encounter", "id": "enc_...", "label": "The Bell" },
+  "ui_target": { "kind": "encounter", "id": "enc_...", "label": "The Bell" },
+  "summary": "Found 3 opposition options",
+  "detail": "Catalog and custom candidates are ready for review.",
+  "preview": {
+    "kind": "plan",
+    "title": "Encounter plan preview",
+    "summary": "3 catalog candidates · 120 XP budget",
+    "note": "Preview only · the encounter has not changed"
+  }
+}
+```
+
+Read-only planning, draft, and benchmark tools can include a temporary `preview`. A preview is presentation guidance only. It does not indicate an encounter mutation.
+
+Readiness projections expose additive `generation_status` (`idle | active | interrupted`), `structural_status` (`incomplete | blocked | ready`), `review_status` (`needed | reviewed`), and `brief_premise`, `packet_premise`, and `display_premise`. The existing `status` and `premise` fields remain compatibility aliases.
+
+`sidekickdm_get_capabilities` also reports an additive `engine` object with the loaded Wasm `build_id`, `interface_version`, and `compatibility` (`compatible`, `update_required`, or `unknown`). The browser does not register WebMCP tools when the native engine is incompatible.
+
 `generation_run_id` is omitted when no run is active.
 
 Expected domain failure:
@@ -191,7 +222,7 @@ Output includes:
 - Party Snapshot summary;
 - target and inferred threat;
 - budget summary;
-- participant/hazard/phase summaries;
+- participant, hazard, and phase summaries, including the XP contribution of each hazard;
 - readiness and review state;
 - active/interrupted Generation Run state;
 - revisions.
@@ -351,6 +382,39 @@ Input:
   "level": 5,
   "complexity": "simple",
   "statistics": ["stealth", "disable_dc", "attack", "dc", "damage"]
+}
+```
+
+### 7.5 `sidekickdm_plan_encounter`
+
+Read-only planning against the active brief and current Construction Budget. It merges exact name, trait, environment, and role matches and explains when a result is only a usable basis for customization.
+
+Input:
+
+```json
+{
+  "encounter_id": "enc_...",
+  "concepts": ["draconic cultists"],
+  "candidate_count": 6,
+  "include_hazards": true
+}
+```
+
+The result includes `budget`, `useful_level_range`, ranked creature `candidates` and (when requested) ranked `hazards`, each with `xp_per_candidate`, `fits_remaining_budget`, `match_reasons`, and `matched_concepts`, plus `unmatched_concepts` and concrete `fallbacks` for empty or partial matches.
+
+### 7.6 `sidekickdm_draft_custom_creature`
+
+Read-only benchmark-guided draft for a missing opposition concept. The returned Creature uses the canonical `OriginalCreature` shape and includes role bands and validation guidance.
+
+Input:
+
+```json
+{
+  "name": "Handoff Cultist",
+  "level": 5,
+  "concept": "A courier guarding a draconic relic.",
+  "role": "controller",
+  "traits": ["humanoid", "occult"]
 }
 ```
 
@@ -540,15 +604,23 @@ Input:
 
 `adjustment`: `weak | normal | elite`.
 
-### 10.2 `sidekickdm_fork_existing_creature`
+Participant groups also accept `display_name` for an encounter-only alias. `faction`, `encounter_role`, `narrative_tier`, and participation mode are closed enums; invalid values are rejected with the field, received value, and allowed values.
+
+### 10.2 `sidekickdm_apply_generation_step`
+
+Atomic composition or guidance mutation. The complete step is validated before one Encounter Revision and one history entry are written. A failed item leaves the Encounter, history, and persistence unchanged.
+
+Composition input contains `participants` (catalog `content_id` items or a canonical custom `creature`) and/or catalog or custom `hazards`. Guidance input contains any combination of named packet sections (`encounter_identity`, `setup`, `battlefield_guidance`, `running_guidance`, `cohesion`, `information_visibility`, `outcomes`, `reward_guidance`, and `alternative_resolutions`). Both forms carry the normal Generation Run revision fields. The result returns the authoritative applied `participants`, `hazards`, and `ui_target`/`ui_targets` projections.
+
+### 10.3 `sidekickdm_fork_existing_creature`
 
 Creates a custom Creature draft from a Catalog Entry. Existing spellcasting blocks may be preserved but not regenerated.
 
-### 10.3 `sidekickdm_validate_custom_creature`
+### 10.4 `sidekickdm_validate_custom_creature`
 
 Read-only validation of a complete or partial Creature DTO. Returns structural errors, band deviations, holistic warnings, and `benchmarkGuidance` without adding the Creature. The guidance classifies each numeric statistic and each Strike attack or damage roll by the nearest band. It also reports the signed distance from that band.
 
-### 10.4 `sidekickdm_create_custom_creature`
+### 10.5 `sidekickdm_create_custom_creature`
 
 Creates and adds an Original or Forked Creature. May combine validation and commit only when there are no structural errors.
 
@@ -566,11 +638,11 @@ Input contains:
 - tactics/morale;
 - provenance (`original` or `forked`).
 
-### 10.5 `sidekickdm_update_creature`
+### 10.6 `sidekickdm_update_creature`
 
 Typed partial update to one encounter-embedded custom Creature. Editing an Existing/Adjusted Creature first converts it to Forked.
 
-### 10.6 `sidekickdm_upsert_npc_profile`
+### 10.7 `sidekickdm_upsert_npc_profile`
 
 Creates or updates the profile associated with a participant or a noncombat NPC component.
 
@@ -580,27 +652,27 @@ Minimum incidental fields:
 - one-line motivation;
 - morale/exit condition.
 
-### 10.7 `sidekickdm_add_existing_hazard`
+### 10.8 `sidekickdm_add_existing_hazard`
 
 Adds a normalized Catalog Hazard with participation mode, placement, and optional phase assignment.
 
-### 10.8 `sidekickdm_validate_simple_hazard`
+### 10.9 `sidekickdm_validate_simple_hazard`
 
 Read-only validation of a Simple Hazard DTO.
 
-### 10.9 `sidekickdm_create_simple_hazard`
+### 10.10 `sidekickdm_create_simple_hazard`
 
 Creates and adds a trap/environmental/haunt Simple Hazard. Custom Complex Hazard creation is rejected with `unsupported_complex_hazard_generation`.
 
-### 10.10 `sidekickdm_update_hazard`
+### 10.11 `sidekickdm_update_hazard`
 
 Typed partial update to an embedded custom Hazard. Editing an Existing Hazard forks it.
 
-### 10.11 `sidekickdm_remove_component`
+### 10.12 `sidekickdm_remove_component`
 
 Removes a participant group, NPC-only component, Hazard, Phase, or Alternative Resolution. It never deletes reusable library records.
 
-### 10.12 `sidekickdm_upsert_phase`
+### 10.13 `sidekickdm_upsert_phase`
 
 Input contains:
 

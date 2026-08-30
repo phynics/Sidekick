@@ -943,6 +943,19 @@ export class IndexedDBEncounterStore {
     return db;
   }
 
+  async clearLocalData() {
+    const db = await this.open();
+    try {
+      const names = this.stores.filter(name => db.objectStoreNames.contains(name));
+      if (!names.length) return;
+      const transaction = db.transaction(names, "readwrite");
+      for (const name of names) transaction.objectStore(name).clear();
+      await transactionComplete(transaction);
+    } finally {
+      db.close?.();
+    }
+  }
+
   async allIDs() {
     const db = await this.open();
     const transaction = db.transaction(this.stores, "readonly");

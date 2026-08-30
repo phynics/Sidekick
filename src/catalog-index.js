@@ -23,6 +23,19 @@ function compact(entry) {
   return Object.freeze({ ...summary, traits: [...(entry.traits ?? [])], environments: [...(entry.environments ?? [])], roles: [...(entry.roles ?? [])] });
 }
 
+const CREATURE_XP = [10, 15, 20, 30, 40, 60, 80, 120, 160];
+const HAZARD_XP = Object.freeze({ simple: [2, 3, 4, 6, 8, 12, 16, 24, 30], complex: [10, 15, 20, 30, 40, 60, 80, 120, 150] });
+
+function xpAtPartyLevel(entry, partyLevel) {
+  if (partyLevel == null || !Number.isFinite(Number(partyLevel))) return null;
+  const relative = Number(entry.level) - Number(partyLevel);
+  const table = entry.kind === "hazard" ? HAZARD_XP[entry.hazard_complexity === "complex" ? "complex" : "simple"] : CREATURE_XP;
+  const above = entry.kind === "hazard" && entry.hazard_complexity === "complex" ? 150 : entry.kind === "hazard" ? 30 : 160;
+  if (relative < -4) return 0;
+  if (relative > 4) return above;
+  return table[relative + 4];
+}
+
 export class CatalogIndex {
   constructor(fixture) {
     if (!fixture || fixture.fixture_version !== 1 || !Array.isArray(fixture.entries)) throw new TypeError("A version 1 Sidekick Catalog fixture is required.");
@@ -41,6 +54,8 @@ export class CatalogIndex {
 
   search({
     query = "",
+    queries = [],
+    match_mode: matchMode = "all",
     kind = null,
     level_min: levelMin = null,
     level_max: levelMax = null,
@@ -54,10 +69,13 @@ export class CatalogIndex {
     hazard_complexity: hazardComplexity = null,
     completeness = "complete",
     support = "supported",
+    party_level: partyLevel = null,
+    remaining_xp: remainingXP = null,
+    include_budget: includeBudget = false,
     limit = 20,
     offset = 0
   } = {}) {
-    const queryTokens = tokens(query);
+    const queryTokens = queries.length ? queries.flatMap(tokens) : tokens(query);
     const normalizedTraits = traits.map(normalized);
     const normalizedRarity = rarity.map(normalized);
     const normalizedSources = sources.map(normalized);
@@ -81,14 +99,41 @@ export class CatalogIndex {
       .filter((entry) => hazardComplexity == null || entry.hazard_complexity === hazardComplexity)
       .map((entry) => {
         const haystack = [entry.name, entry.summary, ...(entry.traits ?? []), ...(entry.environments ?? []), ...(entry.roles ?? [])].map(normalized);
-        if (!queryTokens.every((token) => haystack.some((value) => value.includes(token)))) return null;
+        const matches = matchMode === "any"
+          ? queryTokens.some((token) => haystack.some((value) => value.includes(token)))
+          : queryTokens.every((token) => haystack.some((value) => value.includes(token)));
+        if (queryTokens.length && !matches) return null;
         const name = normalized(entry.name);
         const score = queryTokens.reduce((total, token) => total + (name === token ? 100 : name.startsWith(token) ? 70 : name.split(" ").includes(token) ? 50 : name.includes(token) ? 35 : haystack.some((value) => value.includes(token)) ? 10 : 0), 0);
         return { entry, score };
       })
       .filter(Boolean)
       .sort((left, right) => right.score - left.score || fixedOrder(normalized(left.entry.name), normalized(right.entry.name)) || fixedOrder(left.entry.content_id, right.entry.content_id));
-    return { total: matches.length, offset: safeOffset, limit: safeLimit, hasMore: safeOffset + safeLimit < matches.length, results: matches.slice(safeOffset, safeOffset + safeLimit).map(({ entry }) => compact(entry)) };
+    const includeContext = includeBudget || partyLevel != null || remainingXP != null;
+    const resultItems = matches.slice(safeOffset, safeOffset + safeLimit).map(({ entry }) => {
+      const summary = compact(entry);
+      if (!includeContext) return summary;
+      const entryHaystack = {
+        name: normalized(entry.name),
+        traits: (entry.traits ?? []).map(normalized),
+        environments: (entry.environments ?? []).map(normalized),
+        roles: (entry.roles ?? []).map(normalized),
+        summary: normalized(entry.summary)
+      };
+      const matchReasons = queryTokens.flatMap(token => {
+        const reasons = [];
+        if (entryHaystack.name === token) reasons.push("exact name match");
+        else if (entryHaystack.name.includes(token)) reasons.push("name match");
+        if (entryHaystack.traits.some(value => value.includes(token))) reasons.push("trait match");
+        if (entryHaystack.environments.some(value => value.includes(token))) reasons.push("environment match");
+        if (entryHaystack.roles.some(value => value.includes(token))) reasons.push("role match");
+        if (entryHaystack.summary.includes(token)) reasons.push("description match");
+        return reasons;
+      });
+      const xp = xpAtPartyLevel(entry, partyLevel);
+      return { ...summary, match_reasons: [...new Set(matchReasons)], ...(xp == null ? {} : { xp_at_party_level: xp }), ...(remainingXP == null || xp == null ? {} : { fits_remaining_budget: xp <= Number(remainingXP) }) };
+    });
+    return { total: matches.length, offset: safeOffset, limit: safeLimit, hasMore: safeOffset + safeLimit < matches.length, results: resultItems };
   }
 
   addExistingCreatureCommand(contentID, options = {}) {

@@ -1,16 +1,17 @@
-import { loadBootAssets } from "./boot.js";
+import { loadBootAssets } from "./boot.js?v=3";
 import { loadCatalog } from "./catalog-index.js";
 import { createCreatureBuilder, createEmptyOriginalCreature, projectCreatureXP } from "./creature-builder.js";
 import { forkExistingCreature } from "./creature-generation.js";
 import { createHazardBuilder, createEmptySimpleHazard } from "./hazard-builder.js";
 import { createEncounterPacketEditor, createEmptyPacket } from "./encounter-packet.js";
-import { createWebMCPAdapter } from "./webmcp-adapter.js";
+import { createWebMCPAdapter } from "./webmcp-adapter.js?v=3";
 import { createNPCProfileEditor, createEmptyNPCProfile, fromNativeNPCProfile } from "./npc-profile.js";
-import { createEncounterPhaseEditor, createEmptyPhase } from "./encounter-phases.js";
+import { createEncounterPhaseEditor, createEmptyPhase } from "./encounter-phases.js?v=3";
+import { participantDisplayName, projectEncounterParticipantSummary as encounterParticipantSummary, encounterEnemyLabel, encounterHazardLabel, formatEncounterLevels } from "./encounter-summary.js?v=3";
 import { createComponentsFile, createComponentsArchive, createEncounterFile, createEncounterArchive, createLibraryFile, createLibraryArchive, IndexedDBEncounterStore } from "./encounter-file.js";
 import { createEncounterPrintProjection, renderEncounterPrintProjection } from "./print-packet.js";
 import { applyRunAction, createRunSession, projectRunSession } from "./run-session.js";
-import { generationCancellationCommand, generationProgress, runSessionMatchesEncounter, summarizeAgentCommand } from "./agent-experience.js";
+import { generationProgress, runSessionMatchesEncounter } from "./agent-experience.js";
 
 const app = document.querySelector("#app");
 const STORAGE_DB = "sidekick-dm";
@@ -23,12 +24,18 @@ const uiState = {
   libraryTab: "encounters",
   libraryQuery: "",
   librarySelection: null,
+  libraryInspection: null,
   agentShelf: "dismissed",
   agentEvents: [],
+  agentPreview: null,
+  agentPreviewTimer: null,
   groupLabels: {},
   generationReview: false,
   agentTargetID: null,
   agentTargetLabel: "Active encounter",
+  agentHighlightID: null,
+  agentHighlightTimer: null,
+  agentPhase: "planning",
   runSession: null,
   creature: null,
   hazard: null,
@@ -41,7 +48,14 @@ const uiState = {
   activeModal: null,
   proficiencyWithoutLevel: new Set(),
   replacingParticipantID: null,
-  webMCPStatus: "WebMCP unavailable in this browser"
+  webMCPStatus: "WebMCP unavailable in this browser",
+  webMCPState: "unavailable",
+  agentAutoExpandedRunID: null,
+  agentBusyEvents: {},
+  agentShelfScrollTop: 0,
+  agentManualShelfOverride: false,
+  confirmClearLocalData: false,
+  clearingLocalData: false
 };
 globalThis.sidekickBridge = Object.freeze({ notifySwiftValue(value) { return `JavaScript bridge received Swift value ${value}.`; } });
 
@@ -53,12 +67,70 @@ document.addEventListener("keydown", (event) => {
 });
 
 function escapeHtml(value) { return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;"); }
+function editableFocusDescriptor(node) {
+  if (!node?.matches?.("input, textarea, select, [contenteditable='true']")) return null;
+  return {
+    id: node.id || null,
+    testid: node.dataset?.testid || null,
+    field: node.dataset?.field || null,
+    name: node.getAttribute("name") || null,
+    libraryQuery: node.hasAttribute("data-library-query")
+  };
+}
+function restoreEditableFocus(descriptor, selection) {
+  if (!descriptor) return;
+  const candidates = [...app.querySelectorAll("input, textarea, select, [contenteditable='true']")];
+  const target = candidates.find(node => (descriptor.id && node.id === descriptor.id) || (descriptor.testid && node.dataset.testid === descriptor.testid) || (descriptor.field && node.dataset.field === descriptor.field) || (descriptor.libraryQuery && node.hasAttribute("data-library-query")) || (descriptor.name && node.getAttribute("name") === descriptor.name));
+  if (!target) return;
+  target.focus({ preventScroll: true });
+  if (selection && typeof target.setSelectionRange === "function") {
+    const length = String(target.value ?? "").length;
+    target.setSelectionRange(Math.min(selection.start, length), Math.min(selection.end, length));
+  }
+}
+function markAgentTarget(id) {
+  uiState.agentHighlightID = id ?? null;
+  if (uiState.agentHighlightTimer) clearTimeout(uiState.agentHighlightTimer);
+  if (!id) return;
+  uiState.agentHighlightTimer = setTimeout(() => { uiState.agentHighlightID = null; document.querySelectorAll(".agent-target").forEach(node => node.classList.remove("agent-target")); }, 900);
+}
+function revealAgentTarget(id) {
+  if (!id || globalThis.document?.visibilityState === "hidden") return;
+  const active = document.activeElement;
+  if (document.querySelector("dialog[open]") || active?.matches?.("input, textarea, select, [contenteditable='true']")) return;
+  const target = [...document.querySelectorAll("[data-agent-target]")].find(node => node.dataset.agentTarget === id);
+  if (!target) return;
+  const rect = target.getBoundingClientRect();
+  const topbar = document.querySelector(".topbar")?.getBoundingClientRect();
+  const shelf = document.querySelector(".agent-shelf:not([aria-hidden='true'])")?.getBoundingClientRect();
+  const viewportHeight = globalThis.innerHeight ?? document.documentElement.clientHeight;
+  const safeTop = Math.max(16, (topbar?.bottom ?? 0) + 16);
+  const safeBottom = Math.min(viewportHeight - 16, (shelf?.top ?? viewportHeight) - 16);
+  const delta = rect.top < safeTop ? rect.top - safeTop : rect.bottom > safeBottom ? rect.bottom - safeBottom : 0;
+  if (delta) globalThis.scrollBy?.({ top: delta, behavior: globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ? "auto" : "smooth" });
+}
 function openStore() {
   if (!globalThis.indexedDB) return Promise.resolve(null);
   return new Promise((resolve, reject) => { const request = indexedDB.open(STORAGE_DB, STORAGE_VERSION); request.onupgradeneeded = () => { for (const store of STORAGE_STORES) if (!request.result.objectStoreNames.contains(store)) request.result.createObjectStore(store); }; request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
 }
-async function loadStoreRecord(storeName, key) { try { const db = await openStore(); if (!db || !db.objectStoreNames.contains(storeName)) return null; return await new Promise((resolve, reject) => { const request = db.transaction(storeName).objectStore(storeName).get(key); request.onsuccess = () => resolve(request.result ?? null); request.onerror = () => reject(request.error); }); } catch { return null; } }
-async function saveStoreRecord(storeName, key, value) { try { const db = await openStore(); if (!db || !db.objectStoreNames.contains(storeName)) return false; return await new Promise((resolve, reject) => { const request = db.transaction(storeName, "readwrite").objectStore(storeName).put(value, key); request.onsuccess = () => resolve(true); request.onerror = () => reject(request.error); }); } catch { return false; } }
+async function loadStoreRecord(storeName, key) {
+  let db = null;
+  try {
+    db = await openStore();
+    if (!db || !db.objectStoreNames.contains(storeName)) return null;
+    return await new Promise((resolve, reject) => { const request = db.transaction(storeName).objectStore(storeName).get(key); request.onsuccess = () => resolve(request.result ?? null); request.onerror = () => reject(request.error); });
+  } catch { return null; }
+  finally { db?.close?.(); }
+}
+async function saveStoreRecord(storeName, key, value) {
+  let db = null;
+  try {
+    db = await openStore();
+    if (!db || !db.objectStoreNames.contains(storeName)) return false;
+    return await new Promise((resolve, reject) => { const request = db.transaction(storeName, "readwrite").objectStore(storeName).put(value, key); request.onsuccess = () => resolve(true); request.onerror = () => reject(request.error); });
+  } catch { return false; }
+  finally { db?.close?.(); }
+}
 async function loadRecord(key) { return loadStoreRecord(STORAGE_STORE, key); }
 async function saveRecord(key, value) { return saveStoreRecord(STORAGE_STORE, key, value); }
 async function loadSavedDraft() { return loadRecord("current"); }
@@ -247,6 +319,89 @@ function catalogInspectionMarkup(entry) {
   return `<section class="catalog-inspection" data-testid="catalog-inspection"><div class="panel-heading"><h4>Full Creature inspection</h4><button type="button" data-catalog-close>Close</button></div><p>${escapeHtml(entry.summary ?? entry.summary?.summary ?? "")}</p><div class="catalog-detail-grid"><div><h5>Identity</h5><ul class="catalog-detail-list"><li><span>Level</span><strong>${escapeHtml(entry.level)}</strong></li><li><span>Size</span><strong>${escapeHtml(detail.size ?? "Not recorded")}</strong></li><li><span>Perception</span><strong>${escapeHtml(detail.perception ?? "Not recorded")}</strong></li></ul></div><div><h5>Traits</h5><ul class="catalog-detail-list"><li>${escapeHtml((entry.traits ?? []).join(", ") || "None recorded")}</li></ul></div><div><h5>Senses and languages</h5><ul class="catalog-detail-list"><li>${escapeHtml((detail.senses ?? []).join(", ") || "No senses recorded")}</li><li>${escapeHtml((detail.languages ?? []).join(", ") || "No languages recorded")}</li></ul></div><div><h5>Skills</h5><ul class="catalog-detail-list">${catalogValuesMarkup(detail.skills)}</ul></div><div><h5>Defenses</h5><ul class="catalog-detail-list">${catalogValuesMarkup(detail.defenses)}</ul></div><div><h5>Speeds</h5><ul class="catalog-detail-list">${catalogValuesMarkup(detail.speeds)}</ul></div></div><h5>Strikes</h5><ul class="catalog-detail-list">${strikes}</ul><h5>Abilities</h5><ul class="catalog-detail-list">${abilities}</ul><div class="catalog-detail-grid"><div><h5>Spellcasting</h5><ul class="catalog-detail-list">${list(detail.spellcasting_blocks)}</ul></div><div><h5>Tactics</h5><p>${escapeHtml(detail.tactics ?? "Not recorded")}</p></div><div><h5>Morale</h5><p>${escapeHtml(detail.morale ?? "Not recorded")}</p></div></div><p class="catalog-provenance"><strong>Source:</strong> ${escapeHtml(entry.provenance?.source_title ?? entry.source)} · ${escapeHtml(entry.provenance?.upstream?.identifier ?? "Identifier not recorded")}</p></section>`;
 }
 
+function inspectionValueMap(values) {
+  return Object.fromEntries(Object.entries(values ?? {}).map(([key, value]) => [key, Array.isArray(value) ? value.join(", ") || "None" : statisticNumber(value) ?? value]));
+}
+
+function creatureInspectionEntry(group, record, catalog) {
+  const resolved = participantCreature(group, record, catalog);
+  const existing = resolved?.entry;
+  if (existing?.kind === "creature") return existing;
+  const detail = resolved?.detail ?? {};
+  const identity = detail.identity ?? {};
+  return {
+    kind: "creature",
+    name: participantDisplayName(group),
+    level: Number(group.level ?? identity.level ?? 0),
+    traits: identity.traits ?? existing?.traits ?? group.traits ?? [],
+    summary: identity.concept ?? existing?.summary ?? "No creature concept recorded.",
+    detail: {
+      size: identity.size,
+      perception: statisticNumber(detail.perception),
+      senses: detail.senses ?? [],
+      languages: detail.languages ?? [],
+      skills: inspectionValueMap(detail.skills),
+      defenses: inspectionValueMap(detail.defenses),
+      speeds: inspectionValueMap(detail.speeds),
+      strikes: (detail.strikes ?? []).map(strike => ({ ...strike, attack: statisticNumber(strike.attack), damage: strike.damage?.[0]?.expression ?? strike.damage })),
+      abilities: (detail.abilities ?? []).map(ability => ({ ...ability, action_cost: ability.actionCost ?? ability.action_cost, text: ability.effectText ?? ability.effect ?? ability.text ?? "No rules text recorded." })),
+      spellcasting_blocks: (detail.spellcastingBlocks ?? detail.spellcasting_blocks ?? []).map(block => typeof block === "string" ? block : block.name ?? block.tradition ?? "Spellcasting block"),
+      tactics: detail.tactics,
+      morale: detail.morale
+    },
+    source: resolved?.source ?? "Encounter record",
+    provenance: existing?.provenance ?? detail.provenance ?? {}
+  };
+}
+
+function hazardInspectionEntry(hazard, record, catalog) {
+  const contentID = hazard.contentID ?? hazard.content_id ?? "";
+  const existing = catalog?.get?.(contentID) ?? (record.embeddedCatalogEntries ?? record.embedded_catalog_entries ?? []).find(item => (item.contentID ?? item.content_id) === contentID);
+  if (existing?.kind === "hazard") return existing;
+  const custom = (record.customHazards ?? record.custom_hazards ?? []).find(item => item.id === hazard.id || String(contentID).includes(`/${item.id}/`));
+  const identity = custom?.identity ?? {};
+  return {
+    kind: "hazard",
+    name: hazard.name ?? identity.name ?? "Unnamed hazard",
+    level: Number(hazard.level ?? identity.level ?? 0),
+    hazard_complexity: hazard.complexity ?? "simple",
+    support: custom ? "Custom" : "Encounter record",
+    traits: identity.traits ?? hazard.traits ?? [],
+    summary: custom?.description ?? hazard.description ?? "No hazard description recorded.",
+    detail: {
+      defenses: inspectionValueMap(custom?.defenses ?? hazard.defenses),
+      disable_methods: (custom?.disableMethods ?? custom?.disable_methods ?? []).map(method => typeof method === "string" ? method : `${method.skill ?? "Check"}${method.dc == null ? "" : ` DC ${method.dc}`}${method.requirements ? ` · ${method.requirements}` : ""}`),
+      trigger: custom?.trigger ?? hazard.trigger,
+      effect: custom?.effect?.text ?? custom?.effect ?? hazard.effect,
+      routine: custom?.routine ?? custom?.reset ?? hazard.routine
+    },
+    source: custom?.provenance?.origin ?? existing?.source ?? "Encounter record",
+    provenance: custom?.provenance ?? existing?.provenance ?? {}
+  };
+}
+
+function libraryInspectionMarkup(selection, draft, catalog) {
+  if (!selection) return { title: "Encounter component", body: "<p>No component selected.</p>" };
+  const records = new Map([...(uiState.restoredComponents?.encounters ?? []), draft].filter(Boolean).map(item => [item.id, item]));
+  const record = records.get(selection.encounterID);
+  if (!record) return { title: "Encounter component", body: "<p>This saved encounter is no longer available.</p>" };
+  if (selection.kind === "enemy") {
+    const group = (record.participantGroups ?? record.participant_groups ?? []).find(item => item.id === selection.componentID);
+    if (!group) return { title: "Enemy", body: "<p>This enemy is no longer part of the encounter.</p>" };
+    const entry = creatureInspectionEntry(group, record, catalog);
+    const summary = encounterParticipantSummary(record, catalog).details.find(item => item.group.id === group.id);
+    const adjustment = summary?.adjustment === "normal" ? "Standard" : `${summary?.adjustment?.[0]?.toUpperCase() ?? ""}${summary?.adjustment?.slice?.(1) ?? ""}`;
+    const context = `<section class="encounter-inspection-context"><p class="eyebrow">In this encounter</p><dl><div><dt>Count</dt><dd>${escapeHtml(summary?.quantity ?? group.quantity ?? 1)}</dd></div><div><dt>Contribution</dt><dd>${escapeHtml(summary?.xp?.totalXP ?? 0)} XP</dd></div><div><dt>Template</dt><dd>${escapeHtml(adjustment)}</dd></div><div><dt>Role</dt><dd>${escapeHtml(group.encounterRole ?? group.encounter_role ?? "participant")}</dd></div></dl></section>`;
+    return { title: participantDisplayName(group), body: `${context}${catalogInspectionMarkup(entry)}` };
+  }
+  const hazard = (record.hazards ?? []).find(item => item.id === selection.componentID);
+  if (!hazard) return { title: "Hazard", body: "<p>This hazard is no longer part of the encounter.</p>" };
+  const entry = hazardInspectionEntry(hazard, record, catalog);
+  const summary = encounterParticipantSummary(record, catalog).hazardDetails.find(item => item.hazard.id === hazard.id);
+  const context = `<section class="encounter-inspection-context"><p class="eyebrow">In this encounter</p><dl><div><dt>Contribution</dt><dd>${escapeHtml(summary?.xp ?? 0)} XP</dd></div><div><dt>Participation</dt><dd>${escapeHtml(summary?.participation?.mode ?? "mandatory")}</dd></div><div><dt>Condition</dt><dd>${escapeHtml(summary?.participation?.condition ?? "Always active")}</dd></div><div><dt>Placement</dt><dd>${escapeHtml(hazard.placement ?? "Not recorded")}</dd></div></dl></section>`;
+  return { title: summary?.name ?? entry.name, body: `${context}${catalogInspectionMarkup(entry)}` };
+}
+
 function statisticNumber(value) {
   const number = typeof value === "object" ? Number(value?.value) : Number(value);
   return Number.isFinite(number) ? number : null;
@@ -301,9 +456,9 @@ function participantCardMarkup(group, draft, catalog) {
   const adjustment = group.adjustment === "weak" ? -1 : group.adjustment === "elite" ? 1 : 0;
   const partyLevel = draft.brief?.party?.effectiveLevel ?? draft.brief?.party?.effective_level ?? 1;
   const xp = projectCreatureXP(Number(group.level) + adjustment, partyLevel, group.quantity);
-  const displayName = uiState.groupLabels[group.id] ?? group.name;
+  const displayName = group.displayName ?? group.display_name ?? uiState.groupLabels[group.id] ?? group.name;
   const sourceLabel = displayName === group.name ? (creature?.entry?.traits?.join?.(" · ") || creature?.source || "Custom participant") : `Based on ${group.name}`;
-  return `<article class="creature-card creature-row ${uiState.agentTargetID === group.id ? "agent-target" : ""}" data-testid="participant-${escapeHtml(group.id)}" data-agent-target="${escapeHtml(group.id)}">
+  return `<article class="creature-card creature-row ${uiState.agentHighlightID === group.id ? "agent-target" : ""}" data-testid="participant-${escapeHtml(group.id)}" data-agent-target="${escapeHtml(group.id)}">
     <div class="creature-row-main"><header><div class="creature-identity"><p class="card-kicker">Level ${escapeHtml(group.level)}${proficiencyWithoutLevel ? " · proficiency without level" : ""}</p><h3>${escapeHtml(displayName)}</h3><p class="trait-line">${escapeHtml(sourceLabel)}</p></div><aside class="creature-impact" aria-label="${escapeHtml(group.quantity)} creature${Number(group.quantity) === 1 ? "" : "s"} contributing ${escapeHtml(xp.totalXP)} XP"><div><strong data-testid="creature-count-${escapeHtml(group.id)}">×${escapeHtml(group.quantity)}</strong><span>creature${Number(group.quantity) === 1 ? "" : "s"}</span></div><div class="xp-contribution"><strong data-testid="creature-xp-${escapeHtml(group.id)}">${escapeHtml(xp.totalXP)} XP</strong><span>${Number(group.quantity) > 1 ? `${escapeHtml(xp.xpPerCreature)} each` : "encounter share"}</span></div></aside><span class="role-chip">${escapeHtml(group.encounterRole ?? "participant")}</span></header>
     <div class="stat-ribbon">${stats}</div>
     <div class="creature-detail"><section><h4>Attacks</h4><ul class="strike-list" data-testid="creature-attacks-${escapeHtml(group.id)}">${strikes || "<li class=empty-detail><span>No attacks recorded.</span></li>"}</ul></section><section><h4>Special features</h4><ul class="feature-list" data-testid="creature-features-${escapeHtml(group.id)}">${abilities || "<li class=empty-detail><p>No special features recorded.</p></li>"}</ul></section></div>
@@ -313,16 +468,49 @@ function participantCardMarkup(group, draft, catalog) {
   </article>`;
 }
 
-function libraryWorkspaceMarkup(draft) {
+function encounterSearchText(record, catalog) {
+  const summary = encounterParticipantSummary(record, catalog);
+  const brief = record?.brief ?? {};
+  const packet = record?.packetV1 ?? record?.packet_v1 ?? record?.packet ?? {};
+  const identity = packet?.identity ?? {};
+  return [
+    record?.title,
+    record?.premise,
+    brief?.creative?.premise,
+    brief?.creative?.environment,
+    brief?.premise,
+    brief?.environment,
+    identity?.premise,
+    identity?.title,
+    ...summary.details.flatMap(detail => [detail.name, ...detail.traits, detail.group.faction, detail.group.encounterRole, detail.level]),
+    ...summary.hazardDetails.flatMap(detail => [detail.name, detail.level, detail.complexity, detail.participation?.mode, detail.participation?.condition])
+  ].filter(value => value != null).join(" ").toLowerCase();
+}
+
+function encounterSummaryLine(record, catalog) {
+  const summary = encounterParticipantSummary(record, catalog);
+  if (!summary.enemyCount && !summary.hazardCount) return "No opposition yet";
+  const levels = formatEncounterLevels(summary.allLevels);
+  const hazardLabel = summary.hazardCount ? ` · ${summary.hazardCount} ${encounterHazardLabel(summary.hazardCount)}` : "";
+  const enemyLabel = summary.enemyCount ? `${summary.enemyCount} ${encounterEnemyLabel(summary.enemyCount)}` : "No enemies";
+  return `${enemyLabel}${hazardLabel} · Level ${levels} · ${summary.totalXP} XP`;
+}
+
+function encounterDetailsMarkup(record, catalog) {
+  const summary = encounterParticipantSummary(record, catalog);
+  const groups = summary.details.map(detail => `<li><button type="button" class="roster-inspect" data-library-inspect-kind="enemy" data-library-inspect-encounter="${escapeHtml(record.id)}" data-library-inspect-component="${escapeHtml(detail.group.id)}" aria-label="Inspect ${escapeHtml(detail.name)}"><span><strong>${escapeHtml(detail.quantity)} × ${escapeHtml(detail.name)}</strong><small>Level ${escapeHtml(detail.baseLevel)}${detail.adjustment !== "normal" ? ` · ${escapeHtml(detail.adjustment[0].toUpperCase() + detail.adjustment.slice(1))} (${escapeHtml(detail.level)})` : ""}${detail.traits.length ? ` · ${escapeHtml(detail.traits.join(", "))}` : ""} · ${escapeHtml(detail.xp?.totalXP ?? 0)} XP</small></span><i aria-hidden="true">Inspect ›</i></button></li>`).join("");
+  const hazards = summary.hazardDetails.map(detail => `<li><button type="button" class="roster-inspect" data-library-inspect-kind="hazard" data-library-inspect-encounter="${escapeHtml(record.id)}" data-library-inspect-component="${escapeHtml(detail.hazard.id)}" aria-label="Inspect ${escapeHtml(detail.name)}"><span><strong>${escapeHtml(detail.name)}</strong><small>Level ${escapeHtml(detail.level)} · ${escapeHtml(detail.complexity)} · ${escapeHtml(detail.participation?.mode ?? "mandatory")} · ${escapeHtml(detail.xp)} XP</small></span><i aria-hidden="true">Inspect ›</i></button></li>`).join("");
+  const disclosure = ({ kind, label, count, xp, items, empty }) => `<details class="encounter-roster-disclosure roster-${escapeHtml(kind)}" data-library-roster="${escapeHtml(kind)}"><summary><span class="roster-disclosure-title"><strong>${escapeHtml(count)}</strong><span>${escapeHtml(label)}</span></span><span class="roster-disclosure-xp">${escapeHtml(xp)} XP</span><i aria-hidden="true">›</i></summary><div class="roster-disclosure-body"><ul>${items || `<li class="empty">${escapeHtml(empty)}</li>`}</ul></div></details>`;
+  return `<div class="encounter-roster-disclosures">${disclosure({ kind: "enemies", label: encounterEnemyLabel(summary.enemyCount), count: summary.enemyCount, xp: summary.creatureXP, items: groups, empty: "No enemies in this encounter." })}${disclosure({ kind: "hazards", label: encounterHazardLabel(summary.hazardCount), count: summary.hazardCount, xp: summary.hazardXP, items: hazards, empty: "No hazards in this encounter." })}</div><dl class="encounter-summary-facts"><div><dt>Levels</dt><dd>${escapeHtml(formatEncounterLevels(summary.allLevels))}</dd></div><div><dt>Total XP</dt><dd>${escapeHtml(summary.totalXP)}</dd></div></dl>`;
+}
+
+function libraryWorkspaceMarkup(draft, catalog) {
   const library = uiState.restoredComponents ?? {};
   const encounters = [...new Map([...(library.encounters ?? []), draft].filter(Boolean).map(record => [record.id, record])).values()];
   const creatures = [...new Map([...(library.creatures ?? []), ...(draft.originalCreatures ?? [])].filter(record => record && (record.identity?.name ?? record.name)).map(record => [record.id, record])).values()];
   const records = uiState.libraryTab === "creatures" ? creatures : encounters;
   const query = uiState.libraryQuery.trim().toLowerCase();
-  const filtered = records.filter(record => {
-    const name = record.title ?? record.identity?.name ?? record.name ?? record.id;
-    return !query || String(name).toLowerCase().includes(query);
-  });
+  const filtered = records.filter(record => !query || (uiState.libraryTab === "encounters" ? encounterSearchText(record, catalog) : [record.identity?.name, record.name, record.summary, ...(record.identity?.traits ?? []), ...(record.traits ?? []), record.identity?.level, record.level].filter(Boolean).join(" ").toLowerCase()).includes(query));
   if (!filtered.some(record => record.id === uiState.librarySelection)) uiState.librarySelection = filtered[0]?.id ?? null;
   const selected = filtered.find(record => record.id === uiState.librarySelection) ?? null;
   const rows = filtered.map(record => {
@@ -330,14 +518,17 @@ function libraryWorkspaceMarkup(draft) {
     const name = creature ? record.identity?.name ?? record.name ?? record.id : record.title ?? record.id;
     const metadata = creature
       ? `Level ${escapeHtml(record.identity?.level ?? record.level ?? "unknown")} · ${escapeHtml(record.provenance?.origin ?? "custom")}`
-      : `${escapeHtml(record.brief?.threatTarget?.kind ?? "unrated")} · Level ${escapeHtml(record.brief?.party?.effectiveLevel ?? "unknown")} · ${escapeHtml(record.participantGroups?.length ?? 0)} groups`;
-    return `<button type="button" class="library-row ${record.id === selected?.id ? "is-selected" : ""}" data-library-select-record="${escapeHtml(record.id)}"><span><strong>${escapeHtml(name)}</strong><small>${metadata}</small></span><span class="row-arrow" aria-hidden="true">›</span></button>`;
+      : `${escapeHtml(String(record.brief?.threatTarget?.kind ?? "unrated").replace(/^./, letter => letter.toUpperCase()))} · ${escapeHtml(encounterSummaryLine(record, catalog))}`;
+    const searchText = creature
+      ? [record.identity?.name, record.name, record.summary, ...(record.identity?.traits ?? []), ...(record.traits ?? []), record.identity?.level, record.level].filter(Boolean).join(" ").toLowerCase()
+      : encounterSearchText(record, catalog);
+    return `<button type="button" class="library-row ${record.id === selected?.id ? "is-selected" : ""}" data-library-select-record="${escapeHtml(record.id)}" data-agent-target="${escapeHtml(record.id)}" data-library-search-text="${escapeHtml(searchText)}"><span><strong>${escapeHtml(name)}</strong><small>${metadata}</small></span><span class="row-arrow" aria-hidden="true">›</span></button>`;
   }).join("");
   let preview = `<section class="library-empty"><p class="eyebrow">Nothing saved here yet</p><h2>Start from the library</h2><p>Create a ${uiState.libraryTab === "creatures" ? "monster" : "new encounter"} and Sidekick will keep it here.</p></section>`;
   if (selected && uiState.libraryTab === "encounters") {
     const party = selected.brief?.party ?? {};
     const target = selected.brief?.threatTarget ?? {};
-    preview = `<section class="library-preview" data-testid="library-preview"><p class="eyebrow">Saved encounter</p><h2>${escapeHtml(selected.title)}</h2><p>${escapeHtml(selected.packetV1?.identity?.premise ?? selected.brief?.creative?.premise ?? "No premise recorded.")}</p><dl><div><dt>Party</dt><dd>${escapeHtml(party.size ?? "?")} heroes · level ${escapeHtml(party.effectiveLevel ?? "?")}</dd></div><div><dt>Target</dt><dd>${escapeHtml(target.kind ?? "unrated")}</dd></div><div><dt>Creatures</dt><dd>${escapeHtml(selected.participantGroups?.reduce((sum, group) => sum + Number(group.quantity ?? 1), 0) ?? 0)}</dd></div></dl><div class="library-preview-actions"><button type="button" class="primary" data-library-run="${escapeHtml(selected.id)}">Run encounter</button><button type="button" class="button-secondary" data-library-open="${escapeHtml(selected.id)}">Open in Build</button></div></section>`;
+    preview = `<section class="library-preview" data-testid="library-preview" data-agent-target="${escapeHtml(selected.id)}"><p class="eyebrow">Saved encounter</p><h2>${escapeHtml(selected.title)}</h2><p>${escapeHtml(selected.packetV1?.identity?.premise ?? selected.brief?.creative?.premise ?? "No premise recorded.")}</p><dl><div><dt>Party</dt><dd>${escapeHtml(party.size ?? "?")} heroes · level ${escapeHtml(party.effectiveLevel ?? "?")}</dd></div><div><dt>Target</dt><dd>${escapeHtml(target.kind ?? "unrated")}</dd></div></dl>${encounterDetailsMarkup(selected, catalog)}<div class="library-preview-actions"><button type="button" class="primary" data-library-run="${escapeHtml(selected.id)}">Run encounter</button><button type="button" class="button-secondary" data-library-open="${escapeHtml(selected.id)}">Open in Build</button></div></section>`;
   } else if (selected) {
     const defenses = selected.defenses ?? selected.detail?.defenses ?? {};
     preview = `<section class="library-preview" data-testid="library-preview"><p class="eyebrow">Custom creature</p><h2>${escapeHtml(selected.identity?.name ?? selected.name)}</h2><p>${escapeHtml(selected.identity?.summary ?? selected.summary ?? "Reusable custom monster")}</p><div class="preview-stat-line"><span>Level <strong>${escapeHtml(selected.identity?.level ?? selected.level ?? "?")}</strong></span><span>AC <strong>${escapeHtml(statisticNumber(defenses.ac) ?? "?")}</strong></span><span>HP <strong>${escapeHtml(statisticNumber(defenses.hp) ?? "?")}</strong></span></div><p class="provenance-note">${selected.provenance?.origin === "forked" ? `Based on ${escapeHtml(selected.provenance?.basedOnContentID ?? "a compendium creature")}` : "Original custom creature"}</p><div class="library-preview-actions"><button type="button" class="primary" data-library-edit-creature="${escapeHtml(selected.id)}">Edit creature</button><button type="button" class="button-secondary" data-library-add-creature="${escapeHtml(selected.id)}">Add to encounter</button></div></section>`;
@@ -359,7 +550,7 @@ function runLogLabel(entry, combatants) {
 
 function currentRunSession(session, encounter, catalog) {
   if (runSessionMatchesEncounter(session, encounter)) return session;
-  const presentedEncounter = { ...encounter, participantGroups: (encounter.participantGroups ?? []).map(group => ({ ...group, name: uiState.groupLabels[group.id] ?? group.name })) };
+  const presentedEncounter = { ...encounter, participantGroups: (encounter.participantGroups ?? []).map(group => ({ ...group, name: participantDisplayName(group) })) };
   return createRunSession({ encounter: presentedEncounter, resolveCreature: contentID => catalog?.get?.(contentID) });
 }
 
@@ -375,7 +566,7 @@ function runWorkspaceMarkup(draft, catalog) {
     return rightInitiative - leftInitiative || left.index - right.index;
   }).map(item => item.combatant);
   const selected = session.combatants.find(item => item.id === session.selectedCombatantID) ?? session.combatants[0] ?? null;
-  const initiativeEntry = combatant => `<article class="initiative-entry ${combatant.id === session.activeCombatantID ? "is-active" : ""} ${combatant.id === selected?.id ? "is-selected" : ""} ${combatant.id === session.lastTargetID ? "agent-target" : ""}" data-agent-target="${escapeHtml(combatant.id)}"><button type="button" data-run-select="${escapeHtml(combatant.id)}"><span class="initiative-value">${combatant.initiative ?? "—"}</span><span><strong>${escapeHtml(combatant.name)}</strong><small>${combatant.currentHP == null ? "HP not set" : `${combatant.currentHP} / ${combatant.maxHP} HP`}</small></span></button><label>Initiative<input type="number" data-run-initiative="${escapeHtml(combatant.id)}" value="${combatant.initiative ?? ""}" aria-label="${escapeHtml(combatant.name)} initiative"></label></article>`;
+  const initiativeEntry = combatant => `<article class="initiative-entry ${combatant.id === session.activeCombatantID ? "is-active" : ""} ${combatant.id === selected?.id ? "is-selected" : ""} ${combatant.id === uiState.agentHighlightID ? "agent-target" : ""}" data-agent-target="${escapeHtml(combatant.id)}"><button type="button" data-run-select="${escapeHtml(combatant.id)}"><span class="initiative-value">${combatant.initiative ?? "—"}</span><span><strong>${escapeHtml(combatant.name)}</strong><small>${combatant.currentHP == null ? "HP not set" : `${combatant.currentHP} / ${combatant.maxHP} HP`}</small></span></button><label>Initiative<input type="number" data-run-initiative="${escapeHtml(combatant.id)}" value="${combatant.initiative ?? ""}" aria-label="${escapeHtml(combatant.name)} initiative"></label></article>`;
   const unconfiguredHeroes = ordered.filter(combatant => combatant.kind === "hero" && combatant.currentHP == null && combatant.initiative == null);
   const initiative = ordered.filter(combatant => !unconfiguredHeroes.includes(combatant)).map(initiativeEntry).join("");
   const partySetup = unconfiguredHeroes.length ? `<details class="party-setup"><summary>${unconfiguredHeroes.length} heroes · Add initiative when ready</summary>${unconfiguredHeroes.map(initiativeEntry).join("")}</details>` : "";
@@ -392,7 +583,7 @@ function runWorkspaceMarkup(draft, catalog) {
     const abilities = (detail.abilities ?? []).map(ability => `<details><summary><span>${escapeHtml(ability.name ?? "Ability")}</span><small>${escapeHtml(ability.actionCost ?? ability.action_cost ?? ability.kind ?? "feature")}</small></summary><p>${escapeHtml(ability.effectText ?? ability.effect ?? ability.text ?? "No rules text recorded.")}</p></details>`).join("");
     const conditions = selected.conditions.map(condition => `<button type="button" class="condition-chip" data-run-remove-condition="${escapeHtml(condition.name)}" data-combatant-id="${escapeHtml(selected.id)}">${escapeHtml(condition.name)}${condition.value == null ? "" : ` ${escapeHtml(condition.value)}`} <span aria-hidden="true">×</span></button>`).join("");
     const hpPercent = selected.maxHP ? Math.max(0, Math.min(100, selected.currentHP / selected.maxHP * 100)) : 0;
-    sheet = `<section class="combatant-sheet ${selected.id === session.lastTargetID ? "agent-target" : ""}" data-agent-target="${escapeHtml(selected.id)}"><header class="combatant-heading"><div><p class="eyebrow">${escapeHtml(selected.kind)} · level ${escapeHtml(selected.level ?? "—")}</p><h2>${escapeHtml(selected.name)}</h2></div><div class="hp-display"><strong>${escapeHtml(selected.currentHP ?? "—")}</strong><span>/ ${escapeHtml(selected.maxHP ?? "—")} HP</span></div></header><div class="hp-track"><span style="width:${hpPercent}%"></span></div><form class="hp-controls" data-run-hp-form="${escapeHtml(selected.id)}"><input name="amount" type="number" min="0" value="1" aria-label="HP amount"><button type="submit" name="operation" value="damage" class="button-damage">Damage</button><button type="submit" name="operation" value="healing" class="button-healing">Heal</button></form><div class="run-stat-ribbon">${stats}</div><section class="condition-section"><div class="section-heading compact"><div><p class="eyebrow">Persistent effects</p><h3>Conditions</h3></div></div><div class="condition-list">${conditions || "<span class=empty>No conditions</span>"}</div><form class="condition-form" data-run-condition-form="${escapeHtml(selected.id)}"><input name="name" placeholder="Condition" required><input name="value" type="number" min="0" placeholder="Value" aria-label="Condition value"><button type="submit">Add condition</button></form></section><section class="run-mechanics"><div><p class="eyebrow">Offense</p><h3>Attacks</h3><ul class="run-strikes">${strikes || "<li class=empty>No attacks recorded.</li>"}</ul></div><div><p class="eyebrow">Rules reference</p><h3>Abilities</h3><div class="run-abilities">${abilities || "<p class=empty>No abilities recorded.</p>"}</div></div></section></section>`;
+    sheet = `<section class="combatant-sheet ${selected.id === uiState.agentHighlightID ? "agent-target" : ""}" data-agent-target="${escapeHtml(selected.id)}"><header class="combatant-heading"><div><p class="eyebrow">${escapeHtml(selected.kind)} · level ${escapeHtml(selected.level ?? "—")}</p><h2>${escapeHtml(selected.name)}</h2></div><div class="hp-display"><strong>${escapeHtml(selected.currentHP ?? "—")}</strong><span>/ ${escapeHtml(selected.maxHP ?? "—")} HP</span></div></header><div class="hp-track"><span style="width:${hpPercent}%"></span></div><form class="hp-controls" data-run-hp-form="${escapeHtml(selected.id)}"><input name="amount" type="number" min="0" value="1" aria-label="HP amount"><button type="submit" name="operation" value="damage" class="button-damage">Damage</button><button type="submit" name="operation" value="healing" class="button-healing">Heal</button></form><div class="run-stat-ribbon">${stats}</div><section class="condition-section"><div class="section-heading compact"><div><p class="eyebrow">Persistent effects</p><h3>Conditions</h3></div></div><div class="condition-list">${conditions || "<span class=empty>No conditions</span>"}</div><form class="condition-form" data-run-condition-form="${escapeHtml(selected.id)}"><input name="name" placeholder="Condition" required><input name="value" type="number" min="0" placeholder="Value" aria-label="Condition value"><button type="submit">Add condition</button></form></section><section class="run-mechanics"><div><p class="eyebrow">Offense</p><h3>Attacks</h3><ul class="run-strikes">${strikes || "<li class=empty>No attacks recorded.</li>"}</ul></div><div><p class="eyebrow">Rules reference</p><h3>Abilities</h3><div class="run-abilities">${abilities || "<p class=empty>No abilities recorded.</p>"}</div></div></section></section>`;
   }
   const log = [...session.log].reverse().slice(0, 30).map(entry => `<li class="log-${escapeHtml(entry.kind)}"><span>${escapeHtml(runLogLabel(entry, session.combatants))}</span><small>Round ${escapeHtml(entry.round)}</small></li>`).join("");
   return `<section class="run-workspace" data-testid="run-workspace"><header class="run-toolbar"><div><p class="eyebrow">At the table</p><h1>${escapeHtml(draft.title)}</h1></div><div class="round-control"><span>Round</span><strong data-testid="run-round">${escapeHtml(session.round)}</strong></div><div class="turn-controls"><button type="button" data-run-action="previous_turn">Previous turn</button><button type="button" class="primary" data-run-action="next_turn">Next turn</button><button type="button" class="button-secondary" data-modal-open="run">View packet</button></div></header><div class="run-layout"><aside class="initiative-rail"><div class="rail-heading"><div><p class="eyebrow">Turn order</p><h2>Initiative</h2></div><span>${session.combatants.length}</span></div><div class="initiative-list">${initiative || (!partySetup ? "<p class=empty>No combatants.</p>" : "")}${partySetup}</div></aside><main class="run-stage">${sheet}</main><aside class="roll-log"><div class="rail-heading"><div><p class="eyebrow">Session record</p><h2>Dice and log</h2></div></div><form class="quick-roll" data-run-quick-roll><label>Quick roll<input name="expression" value="1d20" aria-label="Dice expression"></label><button type="submit">Roll</button></form><ul>${log || "<li class=empty>No rolls or changes yet.</li>"}</ul></aside></div></section>`;
@@ -403,15 +594,22 @@ function agentShelfMarkup(snapshot, draft) {
   const progress = generationProgress(draft, snapshot.readiness);
   const fallback = (snapshot.activity ?? []).map(entry => ({ description: entry.description, detail: null, diagnostics: `${entry.origin} · revision ${entry.afterRevision}` }));
   const activities = (uiState.agentEvents.length ? uiState.agentEvents : fallback).slice(0, 30);
-  const latest = activities[0]?.description ?? (generation ? `Building ${progress.current.toLowerCase()}` : "Ready for your next request");
+  const logActivities = [...activities].reverse();
+  const phaseLabels = { planning: "Designing encounter", balancing: "Balancing encounter", "finding opposition": "Finding opposition", "creating monsters": "Creating opposition", "designing the battlefield": "Designing battlefield", "writing tactics": "Writing tactics", "writing clues": "Writing clues", "writing outcomes": "Writing outcomes", reviewing: "Reviewing encounter", saving: "Saving encounter" };
+  const phaseLabel = phaseLabels[uiState.agentPhase] ?? "Designing encounter";
   const state = uiState.agentShelf;
-  return `<aside class="agent-shelf is-${escapeHtml(state)}" data-testid="agent-shelf" aria-label="Sidekick agent activity" aria-hidden="${state === "dismissed"}">
-    <div class="agent-shelf-bar"><span class="agent-orb" aria-hidden="true"><img src="./public/brand/sidekick-logo-v3-transparent.png" alt=""></span><div class="agent-shelf-summary"><span><i class="connection-dot"></i>${escapeHtml(uiState.webMCPStatus)}</span><strong>${escapeHtml(latest)}</strong></div>${generation ? `<div class="agent-progress-mini"><span style="width:${progress.percent}%"></span></div><button type="button" class="agent-stop" data-generation-stop>Stop</button>` : ""}<button type="button" class="button-quiet" data-agent-expand aria-expanded="${state === "expanded"}">${state === "expanded" ? "Collapse" : "Open log"}</button><button type="button" class="button-quiet agent-dismiss" data-agent-dismiss aria-label="Dismiss Sidekick">×</button></div>
-    <div class="agent-shelf-detail"><header><div><p class="eyebrow">Working on</p><h2>${escapeHtml(uiState.agentTargetLabel)}</h2></div>${generation ? `<strong>${progress.completed} of ${progress.steps.length} steps</strong>` : ""}</header>${generation ? `<ol class="generation-steps">${progress.steps.map(step => `<li class="${step.complete ? "is-complete" : ""}">${escapeHtml(step.label)}</li>`).join("")}</ol>` : ""}<div class="agent-activity"><p class="eyebrow">Activity</p><ul>${activities.map(entry => `<li><span>${escapeHtml(entry.description)}</span>${entry.detail ? `<small>${escapeHtml(entry.detail)}</small>` : ""}${entry.diagnostics ? `<details><summary>Technical details</summary><small>${escapeHtml(entry.diagnostics)}</small></details>` : ""}</li>`).join("") || "<li class=empty>No agent changes in this encounter.</li>"}</ul></div></div>
+  const busy = Object.keys(uiState.agentBusyEvents).length > 0;
+  const latestFailure = activities[0]?.status === "failed" ? activities[0] : null;
+  const hidden = state === "dismissed";
+  const headline = latestFailure ? `Needs attention · ${latestFailure.target_label ?? uiState.agentTargetLabel}` : `${phaseLabel} · ${draft.title}`;
+  const preview = uiState.agentPreview ? `<section class="agent-read-preview" data-testid="agent-read-preview"><p class="eyebrow">${escapeHtml(uiState.agentPreview.kind === "guidance" ? "Reference preview" : "Draft preview")}</p><strong>${escapeHtml(uiState.agentPreview.title)}</strong><span>${escapeHtml(uiState.agentPreview.summary)}</span><small>${escapeHtml(uiState.agentPreview.note)}</small></section>` : "";
+  return `<aside class="agent-shelf is-${escapeHtml(state)} ${busy ? "is-busy" : ""}" data-testid="agent-shelf" aria-label="Sidekick agent activity" aria-hidden="${hidden}" ${hidden ? "inert" : ""}>
+    <div class="agent-shelf-bar"><span class="agent-orb" aria-hidden="true"><img src="./public/brand/sidekick-logo-v3-transparent.png" alt=""></span><div class="agent-shelf-summary"><span><i class="connection-dot" data-connection-state="${escapeHtml(uiState.webMCPState)}"></i>${escapeHtml(uiState.webMCPStatus)}${busy ? `<i class="agent-waiting-bauble" title="Sidekick is working" aria-label="Sidekick is working"></i>` : ""}</span><strong>${escapeHtml(headline)}</strong><small>${escapeHtml(uiState.agentTargetLabel)}${busy ? " · Sidekick is working" : ""}</small>${generation ? `<span class="agent-progress-mini" aria-label="${progress.completed} of ${progress.steps.length} steps"><span style="width:${progress.percent}%"></span></span>` : ""}</div><div class="agent-shelf-actions">${generation?.state === "active" ? `<button type="button" class="agent-stop" data-generation-stop>Stop</button>` : ""}<button type="button" class="button-quiet" data-agent-expand aria-expanded="${state === "expanded"}">${state === "expanded" ? "Collapse" : "Open log"}</button><button type="button" class="button-quiet agent-dismiss" data-agent-dismiss aria-label="Dismiss Sidekick">×</button></div></div>
+    <div class="agent-shelf-detail"><header><div><p class="eyebrow">Current work</p><h2>${escapeHtml(headline)}</h2></div>${generation ? `<strong>${progress.completed} of ${progress.steps.length} steps</strong>` : ""}</header>${generation ? `<ol class="generation-steps">${progress.steps.map(step => `<li class="${step.complete ? "is-complete" : ""}">${escapeHtml(step.label)}</li>`).join("")}</ol>` : ""}${preview}<div class="agent-activity"><p class="eyebrow">Activity</p><ul>${logActivities.map(entry => `<li class="activity-${escapeHtml(entry.status ?? "completed")}" data-activity-id="${escapeHtml(entry.event_id ?? "")}" data-activity-time="${escapeHtml(entry.timestamp ?? "")}"><span>${escapeHtml(entry.description ?? entry.summary)}</span>${entry.detail ? `<small>${escapeHtml(entry.detail)}</small>` : ""}${entry.diagnostics ? `<details><summary>Technical details</summary><small>${escapeHtml(entry.diagnostics)}</small></details>` : ""}</li>`).join("") || "<li class=empty>No agent changes in this encounter.</li>"}</ul></div></div>
   </aside>`;
 }
 
-function generationReviewMarkup(draft, snapshot) {
+function generationReviewMarkup(draft, snapshot, catalog) {
   const generation = draft.generation ?? null;
   if (!generation && !uiState.generationReview) return "";
   const progress = generationProgress(draft, snapshot.readiness);
@@ -420,8 +618,18 @@ function generationReviewMarkup(draft, snapshot) {
   const setup = packet.setup ?? {};
   const running = packet.runningGuidance ?? packet.running_guidance ?? {};
   const outcomes = packet.outcomes ?? {};
+  const budget = snapshot.budget ?? {};
+  const readiness = snapshot.readiness ?? {};
+  const opposition = encounterParticipantSummary(draft, catalog);
+  const assumptions = draft.brief?.generationAssumptions ?? draft.brief?.generation_assumptions ?? [];
+  const structuralErrors = readiness.structuralErrors ?? readiness.structural_errors ?? [];
+  const designWarnings = readiness.designWarnings ?? readiness.design_warnings ?? [];
   const value = (...items) => items.find(item => String(item ?? "").trim()) ?? "Still being authored";
-  return `<section class="generation-workspace" data-testid="generation-workspace"><header><div><p class="eyebrow">${generation ? "Sidekick is building" : "Encounter draft ready"}</p><h2>${escapeHtml(generation ? progress.current : "Review before play")}</h2></div><strong>${progress.percent}%</strong></header><div class="generation-progress"><span style="width:${progress.percent}%"></span></div><div class="generation-preview"><div><span>Premise</span><p>${escapeHtml(value(identity.premise, draft.brief?.creative?.premise))}</p></div><div><span>Opening</span><p>${escapeHtml(value(setup.readAloud, setup.read_aloud))}</p></div><div><span>Tactics</span><p>${escapeHtml(value(running.openingTactics, running.opening_tactics))}</p></div><div><span>Outcome</span><p>${escapeHtml(value(outcomes.victory))}</p></div></div>${generation ? `<p class="generation-note">You can inspect the encounter while Sidekick works. Editing controls that could conflict are temporarily paused.</p>` : `<div class="generation-actions"><button type="button" data-modal-open="run">Review full packet</button><button type="button" class="button-secondary" data-review-save>Save to library</button><button type="button" class="primary" data-start-encounter>Start encounter</button></div>`}</section>`;
+  const list = items => items.length ? `<ul>${items.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "<p class=empty>None</p>";
+  const requestedDifficulty = draft.brief?.threatTarget?.kind ?? draft.brief?.threat_target?.kind ?? "Not set";
+  const availableXP = budget.constructionBudget ?? budget.construction_budget ?? 0;
+  const hazardMarkup = opposition.hazardDetails.map(detail => `<li><strong>${escapeHtml(detail.name)}</strong><span>Level ${escapeHtml(detail.level)} · ${escapeHtml(detail.complexity)} · ${escapeHtml(detail.xp)} XP</span></li>`).join("") || "<li class=empty>No hazards selected.</li>";
+  return `<section class="generation-workspace" data-testid="generation-workspace"><header><div><p class="eyebrow">${generation ? "Sidekick is building" : "Encounter draft ready"}</p><h2>${escapeHtml(generation ? progress.current : "Review before play")}</h2></div><strong>${progress.percent}%</strong></header><div class="generation-progress"><span style="width:${progress.percent}%"></span></div><div class="generation-preview"><div><span>Premise</span><p>${escapeHtml(value(identity.premise, draft.brief?.creative?.premise, draft.brief?.premise))}</p></div><div><span>Opening</span><p>${escapeHtml(value(setup.readAloud, setup.read_aloud))}</p></div><div><span>Tactics</span><p>${escapeHtml(value(running.openingTactics, running.opening_tactics))}</p></div><div><span>Outcome</span><p>${escapeHtml(value(outcomes.victory))}</p></div></div><dl class="generation-readiness-facts"><div><dt>Requested difficulty</dt><dd>${escapeHtml(requestedDifficulty)}</dd></div><div><dt>Inferred difficulty</dt><dd>${escapeHtml(budget.inferredThreat ?? budget.inferred_threat ?? "Not set")}</dd></div><div><dt>Creature XP</dt><dd>${escapeHtml(opposition.creatureXP)}</dd></div><div><dt>Hazard XP</dt><dd>${escapeHtml(opposition.hazardXP)}</dd></div><div><dt>Total XP</dt><dd>${escapeHtml(opposition.totalXP)} / ${escapeHtml(availableXP)}</dd></div><div><dt>Opposition</dt><dd>${escapeHtml(opposition.enemyCount)} ${encounterEnemyLabel(opposition.enemyCount)} · ${escapeHtml(formatEncounterLevels(opposition.allLevels))}</dd></div></dl><section class="generation-review-details"><div><p class="eyebrow">Enemy roster · ${escapeHtml(opposition.creatureXP)} XP</p><ul>${opposition.details.map(detail => `<li><strong>${escapeHtml(detail.quantity)} × ${escapeHtml(detail.name)}</strong><span>Level ${escapeHtml(detail.baseLevel)}${detail.adjustment !== "normal" ? ` · ${escapeHtml(detail.adjustment[0].toUpperCase() + detail.adjustment.slice(1))} (${escapeHtml(detail.level)})` : ""}${detail.traits.length ? ` · ${escapeHtml(detail.traits.join(", "))}` : ""} · ${escapeHtml(detail.xp?.totalXP ?? 0)} XP</span></li>`).join("") || "<li class=empty>No opposition selected.</li>"}</ul><p class="eyebrow">Hazards · ${escapeHtml(opposition.hazardXP)} XP</p><ul>${hazardMarkup}</ul></div><div><p class="eyebrow">Assumptions</p>${list(assumptions)}<p class="eyebrow">Structural errors</p>${list(structuralErrors)}<p class="eyebrow">Design warnings</p>${list(designWarnings)}</div></section>${generation ? `<p class="generation-note">You can inspect the encounter while Sidekick works. Editing controls that could conflict are temporarily paused.</p>` : `<div class="generation-actions"><button type="button" data-modal-open="run">Review packet</button><button type="button" class="button-secondary" data-review-save>Save to library</button><button type="button" class="primary" data-start-encounter>Start encounter</button></div>`}</section>`;
 }
 
 function runPacketMarkup(draft, snapshot) {
@@ -435,7 +643,7 @@ function runPacketMarkup(draft, snapshot) {
   const list = (items) => Array.isArray(items) && items.length ? `<ul>${items.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : `<p class="run-empty">Not recorded</p>`;
   const fact = (label, content) => `<div class="run-fact"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value(content))}</dd></div>`;
   const combatants = (draft.participantGroups ?? []).map(group => {
-    const label = uiState.groupLabels[group.id] ?? group.name;
+    const label = participantDisplayName(group);
     const source = label === group.name ? "" : ` · based on ${group.name}`;
     return `<li><div><strong>${escapeHtml(group.quantity)} × ${escapeHtml(label)}</strong><span>Level ${escapeHtml(group.level)} · ${escapeHtml(group.encounterRole ?? "participant")}${escapeHtml(source)}</span></div><p>${escapeHtml(group.sharedTactics ?? "Use the listed mechanics and terrain.")}</p></li>`;
   }).join("");
@@ -459,7 +667,18 @@ function modalMarkup(id, title, body, className = "") {
 }
 
 function render({ asset, engine, catalog, catalogState = { query: "", results: null }, bridgeMessage = "", notice = "" }) {
-  if (!engine.available) { app.innerHTML = `<section class="panel error"><h1>Sidekick DM could not start</h1><p>${escapeHtml(engine.reason)}</p></section>`; return; }
+  document.querySelectorAll(".topbar, .agent-shelf").forEach(node => node._sidekickLayoutObserver?.disconnect?.());
+  if (!engine.available) {
+    const updateRequired = engine.compatibility === "update_required";
+    app.innerHTML = `<section class="panel error"><h1>${updateRequired ? "Sidekick needs an update" : "Sidekick DM could not start"}</h1><p>${escapeHtml(updateRequired ? "The browser loaded an older native engine. Reload this page to pick up the matching engine." : engine.reason)}</p><button type="button" class="primary" data-action="reload-app" ${updateRequired ? "" : "hidden"}>Reload Sidekick</button></section>`;
+    app.querySelector('[data-action="reload-app"]')?.addEventListener("click", () => globalThis.location?.reload?.());
+    return;
+  }
+  const focused = editableFocusDescriptor(document.activeElement);
+  const selection = focused && typeof document.activeElement.selectionStart === "number" ? { start: document.activeElement.selectionStart, end: document.activeElement.selectionEnd ?? document.activeElement.selectionStart } : null;
+  const documentScroll = { x: globalThis.scrollX ?? 0, y: globalThis.scrollY ?? 0 };
+  const previousActivityList = app.querySelector(".agent-activity ul");
+  const previousActivityScroll = previousActivityList ? { top: previousActivityList.scrollTop, height: previousActivityList.scrollHeight, client: previousActivityList.clientHeight } : null;
   const activeCatalogState = { ...DEFAULT_CATALOG_STATE, ...catalogState };
   const snapshot = engine.snapshot; const draft = snapshot.encounter ?? snapshot.draft; const party = draft.brief?.party ?? { effectiveLevel: 1, size: 4 }; const target = draft.brief?.threatTarget ?? { kind: "moderate", customXP: null }; const budget = snapshot.budget ?? { baseTargetXP: 80, constructionBudget: 80, baseXPAward: 80, guaranteedXP: 0, avoidableXP: 0, conditionalXP: 0, peakActiveXP: 0, totalEncounterXP: 0, inferredThreat: "trivial", warnings: [] };
   const generation = draft.generation ?? null;
@@ -478,6 +697,7 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
   const catalogRangeEnd = catalogResults?.offset + (catalogResults?.results?.length ?? 0) || 0;
   const catalogHazards = catalog?.search({ kind: "hazard", query: "", edition: null, completeness: null, support: null, limit: 20 });
   const catalogHazardMarkup = catalogHazards?.results?.map(entry => `<li><div><strong>${escapeHtml(entry.name)}</strong><span>Level ${entry.level} · ${escapeHtml(entry.hazard_complexity ?? "simple")} · ${escapeHtml(entry.source)} · ${escapeHtml(entry.support)}</span><small>${escapeHtml(entry.summary)}</small><div class="catalog-actions"><button type="button" data-catalog-inspect="${escapeHtml(entry.content_id)}">Inspect</button>${catalogEntryCanAdd(entry) ? `<button type="button" data-catalog-hazard-add="${escapeHtml(entry.content_id)}">Add Hazard</button>` : "<span class=\"catalog-unavailable\">Add unavailable while rights or completeness is unresolved</span>"}</div></div></li>`).join("") ?? "";
+  const libraryInspection = libraryInspectionMarkup(uiState.libraryInspection, draft, catalog);
   const reusableLibrary = {
     creatures: [...new Map([...(uiState.restoredComponents?.creatures ?? []), ...(draft.originalCreatures ?? [])].map(record => [record.id, record])).values()],
     npcProfiles: [...new Map([...(uiState.restoredComponents?.npcProfiles ?? []), ...(draft.npcProfiles ?? [])].map(record => [record.id, record])).values()],
@@ -493,25 +713,34 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
   const reusableMarkup = reusableRecords.map(record => `<li><label><input type="checkbox" data-library-select="${escapeHtml(record.kind)}" value="${escapeHtml(record.id)}" checked>${escapeHtml(record.label)} <small>${escapeHtml(record.kind)}</small></label></li>`).join("");
   const npcTarget = (draft.participantGroups ?? []).some((group) => group.id === uiState.npcTarget) ? uiState.npcTarget : draft.participantGroups?.[0]?.id ?? null;
   uiState.npcTarget = npcTarget;
-  const npcOptions = (draft.participantGroups ?? []).map((group) => `<option value="${escapeHtml(group.id)}" ${group.id === npcTarget ? "selected" : ""}>${escapeHtml(group.name)}</option>`).join("");
+  const npcOptions = (draft.participantGroups ?? []).map((group) => `<option value="${escapeHtml(group.id)}" ${group.id === npcTarget ? "selected" : ""}>${escapeHtml(participantDisplayName(group))}</option>`).join("");
   const catalogBody = `<section class="catalog-panel"><form data-action="search-catalog"><div class="catalog-search-row"><label class="search-field">Search the catalog<input name="query" data-catalog-filter="query" value="${escapeHtml(activeCatalogState.query)}" placeholder="Name, trait, role, or description" autofocus></label><label>Type<select name="kind" data-catalog-filter="kind"><option value="creature" ${activeCatalogState.kind === "creature" ? "selected" : ""}>Creatures</option><option value="hazard" ${activeCatalogState.kind === "hazard" ? "selected" : ""}>Hazards</option></select></label><button type="submit">Search</button></div><details class="filter-drawer"><summary>Filters</summary><div class="catalog-filter-grid"><label>Level min<input name="levelMin" data-catalog-filter="level_min" type="number" min="-1" max="30" value="${escapeHtml(activeCatalogState.levelMin)}"></label><label>Level max<input name="levelMax" data-catalog-filter="level_max" type="number" min="-1" max="30" value="${escapeHtml(activeCatalogState.levelMax)}"></label><label>Trait<input name="traits" data-catalog-filter="traits" value="${escapeHtml(activeCatalogState.traits)}" placeholder="trap, fire"></label><label>Source<input name="sources" data-catalog-filter="sources" value="${escapeHtml(activeCatalogState.sources)}" placeholder="Monster Core"></label><label>Environment<input name="environments" data-catalog-filter="environments" value="${escapeHtml(activeCatalogState.environments)}" placeholder="forest, urban"></label><label>Role<input name="roles" data-catalog-filter="roles" value="${escapeHtml(activeCatalogState.roles)}" placeholder="brute, controller"></label><label>Rarity<select name="rarity" data-catalog-filter="rarity"><option value="" ${!activeCatalogState.rarity ? "selected" : ""}>Any rarity</option><option value="common" ${activeCatalogState.rarity === "common" ? "selected" : ""}>Common</option><option value="uncommon" ${activeCatalogState.rarity === "uncommon" ? "selected" : ""}>Uncommon</option></select></label><label>Edition<select name="edition" data-catalog-filter="edition"><option value="current" ${activeCatalogState.edition === "current" ? "selected" : ""}>Current</option><option value="legacy" ${activeCatalogState.edition === "legacy" ? "selected" : ""}>Legacy</option><option value="adventure" ${activeCatalogState.edition === "adventure" ? "selected" : ""}>Adventure</option></select></label><label>Spellcasting<select name="spellcasting" data-catalog-filter="spellcasting"><option value="" ${activeCatalogState.spellcasting === "" ? "selected" : ""}>Any spellcasting</option><option value="true" ${activeCatalogState.spellcasting === "true" ? "selected" : ""}>Spellcasting</option><option value="false" ${activeCatalogState.spellcasting === "false" ? "selected" : ""}>No spellcasting</option></select></label><label>Hazard complexity<select name="hazardComplexity" data-catalog-filter="hazard_complexity"><option value="" ${!activeCatalogState.hazardComplexity ? "selected" : ""}>Any complexity</option><option value="simple" ${activeCatalogState.hazardComplexity === "simple" ? "selected" : ""}>Simple</option><option value="complex" ${activeCatalogState.hazardComplexity === "complex" ? "selected" : ""}>Complex</option></select></label><label>Completeness<select name="completeness" data-catalog-filter="completeness"><option value="complete" ${activeCatalogState.completeness === "complete" ? "selected" : ""}>Complete</option><option value="partial" ${activeCatalogState.completeness === "partial" ? "selected" : ""}>Partial</option></select></label><label>Support<select name="support" data-catalog-filter="support"><option value="supported" ${activeCatalogState.support === "supported" ? "selected" : ""}>Supported</option><option value="unsupported" ${activeCatalogState.support === "unsupported" ? "selected" : ""}>Unsupported</option></select></label><label>Page size<select name="limit" data-catalog-filter="limit"><option value="4" ${Number(activeCatalogState.limit) === 4 ? "selected" : ""}>4</option><option value="8" ${Number(activeCatalogState.limit) === 8 ? "selected" : ""}>8</option><option value="20" ${Number(activeCatalogState.limit) === 20 ? "selected" : ""}>20</option></select></label></div><button type="button" class="button-ghost" data-catalog-reset>Reset filters</button></details></form><p role="status" data-testid="catalog-status">Showing ${catalogRangeStart}–${catalogRangeEnd} of ${catalogResults?.total ?? 0} supported result(s).</p><ul class="catalog-results">${catalogMarkup || "<li class=empty>No matching supported Catalog Entries.</li>"}</ul><div class="catalog-pagination"><button type="button" class="button-secondary" data-catalog-page="previous" ${!catalogResults || catalogResults.offset < 1 ? "disabled" : ""}>Previous</button><span data-testid="catalog-page">Offset ${catalogResults?.offset ?? 0}</span><button type="button" class="button-secondary" data-catalog-page="next" ${!catalogResults?.hasMore ? "disabled" : ""}>Next</button></div>${catalogInspectionMarkup(inspectedCatalogEntry)}<details class="rights-drawer"><summary>Inspect all existing hazards</summary><p>${catalogHazards?.total ?? 0} entries are available for inspection. Unsupported entries cannot be added.</p><ul class="catalog-results">${catalogHazardMarkup || "<li class=empty>No catalog Hazards.</li>"}</ul></details></section>`;
   const transferBody = `<p class="modal-intro">Choose the records to move between encounters or a reusable library.</p><ul class="transfer-list">${reusableMarkup || "<li class=empty>No reusable records in this Encounter.</li>"}</ul><div class="transfer-groups"><section><h3>Selected components</h3><div class="controls"><button type="button" data-action="export-components-json" ${reusableRecords.length ? "" : "disabled"}>Export selected JSON</button><button type="button" data-action="export-components-zip" ${reusableRecords.length ? "" : "disabled"}>Export selected ZIP</button><label class="file-control">Import components JSON<input type="file" accept="application/json,.json" data-action="import-components"></label><label class="file-control">Import components ZIP<input type="file" accept="application/zip,.zip,.sidekickdm.zip" data-action="import-components-zip"></label></div></section><section><h3>Whole library</h3><div class="controls"><button type="button" data-action="export-library-json">Export library JSON</button><button type="button" data-action="export-library-zip">Export library ZIP</button><label class="file-control">Import library JSON<input type="file" accept="application/json,.json" data-action="import-library"></label><label class="file-control">Import library ZIP<input type="file" accept="application/zip,.zip,.sidekickdm.zip" data-action="import-library-zip"></label></div></section></div>`;
   const exportBody = `<p class="modal-intro">Export a portable encounter, import an earlier version, or prepare the packet for the table.</p><div class="export-grid"><section><p class="card-kicker">Complete encounter</p><h3>Portable files</h3><p>JSON is readable and diffable. ZIP includes referenced attachments.</p><div class="controls"><button type="button" data-action="export-encounter">Export Encounter JSON</button><button type="button" data-action="export-encounter-zip">Export Encounter ZIP</button></div></section><section><p class="card-kicker">Restore</p><h3>Import encounter</h3><p>The native engine validates the encounter before it replaces the current draft.</p><div class="controls"><label class="file-control">Import Encounter JSON<input type="file" accept="application/json,.json" data-action="import-encounter"></label><label class="file-control">Import Encounter ZIP<input type="file" accept="application/zip,.zip,.sidekickdm.zip" data-action="import-encounter-zip"></label></div></section><section><p class="card-kicker">At the table</p><h3>Run-ready packet</h3><p>Open the print layout with participants, phases, guidance, and notices.</p><button type="button" data-action="print-encounter">Print Packet</button></section><section><p class="card-kicker">Reusable records</p><h3>Components and library</h3><p>Move creatures, hazards, profiles, and attachments without replacing the encounter.</p><button type="button" class="button-secondary" data-modal-open="transfer">Open transfer tools</button></section></div>`;
   const runPacketBody = runPacketMarkup(draft, snapshot);
-  const libraryBody = libraryWorkspaceMarkup(draft);
+  const libraryBody = libraryWorkspaceMarkup(draft, catalog);
   const runWorkspaceBody = runWorkspaceMarkup(draft, catalog);
+  const connectionDot = `<span class="connection-dot" data-connection-state="${escapeHtml(uiState.webMCPState)}" title="${escapeHtml(uiState.webMCPStatus)}"></span>`;
+  const settingsBody = `<section class="settings-panel" data-testid="settings-panel">
+    <div class="settings-summary"><div><p class="eyebrow">Browser storage</p><h3>Local data</h3><p>Sidekick keeps your encounters, custom creatures, run history, and attachments in this browser.</p></div><span class="settings-storage-mark" aria-hidden="true">Local</span></div>
+    <div class="danger-zone"><div><h3>Clear local data</h3><p>This permanently removes every saved Sidekick encounter, custom record, run, and attachment from this browser.</p></div>
+      ${uiState.confirmClearLocalData
+        ? `<div class="clear-confirmation" role="alert"><strong>Clear everything?</strong><p>This cannot be undone. Export anything you want to keep first.</p><div><button type="button" class="button-secondary" data-cancel-clear-local-data ${uiState.clearingLocalData ? "disabled" : ""}>Cancel</button><button type="button" class="button-danger" data-confirm-clear-local-data ${uiState.clearingLocalData ? "disabled" : ""}>${uiState.clearingLocalData ? "Clearing…" : "Yes, clear local data"}</button></div></div>`
+        : `<button type="button" class="button-danger" data-request-clear-local-data>Clear local data</button>`}
+    </div>
+  </section>`;
   app.innerHTML = `
     <div class="shell mode-${escapeHtml(uiState.mode)} agent-${escapeHtml(uiState.agentShelf)}">
-      <header class="topbar"><div class="product-mark"><span class="product-sigil" aria-hidden="true"><img src="./public/brand/sidekick-logo-v3-transparent.png" alt=""></span><div><p class="eyebrow">Sidekick DM</p><strong>DM workspace</strong></div></div><nav class="mode-tabs" aria-label="Workspace mode"><button type="button" data-mode="library" aria-current="${uiState.mode === "library" ? "page" : "false"}">Library</button><button type="button" data-mode="build" aria-current="${uiState.mode === "build" ? "page" : "false"}">Build</button><button type="button" data-mode="run" aria-current="${uiState.mode === "run" ? "page" : "false"}" ${generation ? "disabled" : ""}>Run</button></nav><div class="title-block"><h1>${escapeHtml(draft.title)}</h1><div class="title-meta"><span class="badge" data-testid="readiness">${escapeHtml(snapshot.readiness?.status ?? "incomplete")}</span><span>Revision <strong data-testid="encounter-revision">${draft.revision}</strong></span><span>${escapeHtml(party.size)} heroes · level ${escapeHtml(party.effectiveLevel)}</span></div></div><nav class="controls command-controls" aria-label="Encounter actions"><div class="history-controls"><button type="button" class="button-quiet" data-action="undo" ${snapshot.canUndo ? "" : "disabled"}>Undo</button><button type="button" class="button-quiet" data-action="redo" ${snapshot.canRedo ? "" : "disabled"}>Redo</button></div><details class="action-menu"><summary>More</summary><div class="action-menu-popover"><button type="button" data-modal-open="run">View packet</button><button type="button" data-modal-open="packet">Edit packet</button><button type="button" data-modal-open="export">Export and print</button><button type="button" data-modal-open="npc" ${npcTarget ? "" : "disabled"}>NPC profiles</button><button type="button" data-modal-open="phase">Phases</button><button type="button" data-modal-open="transfer">Transfer library</button><button type="button" data-action="new-encounter">New encounter</button></div></details><button type="button" class="sidekick-toggle" data-agent-toggle aria-expanded="${uiState.agentShelf !== "dismissed"}">Sidekick <span class="connection-dot"></span></button></nav></header>
+      <header class="topbar"><div class="product-mark"><span class="product-sigil" aria-hidden="true"><img src="./public/brand/sidekick-logo-v3-transparent.png" alt=""></span><div><p class="eyebrow">Sidekick DM</p><strong>DM workspace</strong></div></div><nav class="mode-tabs" aria-label="Workspace mode"><button type="button" data-mode="library" aria-current="${uiState.mode === "library" ? "page" : "false"}">Library</button><button type="button" data-mode="build" aria-current="${uiState.mode === "build" ? "page" : "false"}">Build</button><button type="button" data-mode="run" aria-current="${uiState.mode === "run" ? "page" : "false"}" ${generation ? "disabled" : ""}>Run</button></nav><div class="title-block"><h1>${escapeHtml(draft.title)}</h1><div class="title-meta"><span class="badge" data-testid="readiness">${escapeHtml(snapshot.readiness?.status ?? "incomplete")}</span><span>Revision <strong data-testid="encounter-revision">${draft.revision}</strong></span><span>${escapeHtml(party.size)} heroes · level ${escapeHtml(party.effectiveLevel)}</span></div></div><nav class="controls command-controls" aria-label="Encounter actions"><div class="history-controls"><button type="button" class="button-quiet" data-action="undo" ${snapshot.canUndo ? "" : "disabled"}>Undo</button><button type="button" class="button-quiet" data-action="redo" ${snapshot.canRedo ? "" : "disabled"}>Redo</button></div><details class="action-menu"><summary>More</summary><div class="action-menu-popover"><button type="button" data-modal-open="run">View packet</button><button type="button" data-modal-open="packet">Edit packet</button><button type="button" data-modal-open="export">Export and print</button><button type="button" data-modal-open="npc" ${npcTarget ? "" : "disabled"}>NPC profiles</button><button type="button" data-modal-open="phase">Phases</button><button type="button" data-modal-open="transfer">Transfer library</button><button type="button" data-modal-open="settings">Settings</button><button type="button" data-action="new-encounter">New encounter</button></div></details><button type="button" class="sidekick-toggle" data-agent-toggle aria-expanded="${uiState.agentShelf !== "dismissed"}" aria-label="Sidekick. ${escapeHtml(uiState.webMCPStatus)}">Sidekick ${connectionDot}</button></nav></header>
       ${generation ? `<div class="generation-banner warning" data-testid="generation-state"><strong>${generationState === "interrupted" ? "Generation paused" : "Sidekick is building this encounter"}</strong><p>Follow progress in the Sidekick shelf. You can browse and inspect content while conflicting edits are paused.</p></div>` : ""}
       ${libraryBody}
       ${runWorkspaceBody}
       <div class="workspace">
-        <section class="encounter-stage" aria-labelledby="roster-title">${generationReviewMarkup(draft, snapshot)}<div class="section-heading"><div><p class="eyebrow">Encounter composition</p><h2 id="roster-title">Opposition</h2></div><details class="action-menu add-menu"><summary>Add creature</summary><div class="action-menu-popover"><button type="button" data-modal-open="catalog">Search catalog</button><button type="button" data-modal-open="creature" data-new-creature>Create custom creature</button></div></details></div><div class="creature-roster">${participants || `<section class="empty-state"><p class="eyebrow">The field is clear</p><h3>No creatures in this encounter</h3><p>Search the catalog or create a custom creature. Statistics appear here as soon as you add one.</p><div><button type="button" data-modal-open="catalog">Search catalog</button><button type="button" class="button-secondary" data-modal-open="creature" data-new-creature>Create creature</button></div></section>`}</div>
+        <section class="encounter-stage" aria-labelledby="roster-title">${generationReviewMarkup(draft, snapshot, catalog)}<div class="section-heading"><div><p class="eyebrow">Encounter composition</p><h2 id="roster-title">Opposition</h2></div><details class="action-menu add-menu"><summary>Add creature</summary><div class="action-menu-popover"><button type="button" data-modal-open="catalog">Search catalog</button><button type="button" data-modal-open="creature" data-new-creature>Create custom creature</button></div></details></div><div class="creature-roster">${participants || `<section class="empty-state"><p class="eyebrow">The field is clear</p><h3>No creatures in this encounter</h3><p>Search the catalog or create a custom creature. Statistics appear here as soon as you add one.</p><div><button type="button" data-modal-open="catalog">Search catalog</button><button type="button" class="button-secondary" data-modal-open="creature" data-new-creature>Create creature</button></div></section>`}</div>
           <div class="support-grid"><section><div class="section-heading compact"><div><p class="eyebrow">Environment</p><h2>Hazards</h2></div><button type="button" class="button-ghost" data-modal-open="hazard" data-new-hazard>Add hazard</button></div><div class="support-list">${hazards || "<p class=empty>No hazards placed.</p>"}</div></section><section><div class="section-heading compact"><div><p class="eyebrow">Encounter flow</p><h2>Phases</h2></div><button type="button" class="button-ghost" data-action="new-phase">New phase</button></div><div class="support-list">${phases || "<p class=empty>No phases authored.</p>"}</div></section></div>
         </section>
         <aside class="command-rail"><section class="rail-panel budget-panel"><div class="panel-heading"><div><p class="eyebrow">Encounter pressure</p><h2>${escapeHtml(target.kind)} encounter</h2></div><strong class="threat-mark">${escapeHtml(budget.peakActiveXP)} XP</strong></div><div class="budget-hero"><span>Peak active</span><strong>${escapeHtml(budget.peakActiveXP)} <small>/ ${escapeHtml(budget.constructionBudget)} XP</small></strong></div><p class="inferred">Inferred threat: <strong data-testid="inferred-threat">${escapeHtml(budget.inferredThreat)}</strong></p>${budget.warnings.map((warning) => `<p class="warning">${escapeHtml(warning)}</p>`).join("")}<details class="rail-disclosure"><summary>Budget details</summary><div class="budget">${budgetMarkup(budget)}</div></details><details class="rail-disclosure"><summary>Encounter settings</summary><div class="settings-fields"><label>Title<input data-testid="encounter-title" data-field="title" value="${escapeHtml(draft.title)}"></label><div class="party-grid"><label>Party level<input data-testid="party-level" data-field="effective_level" type="number" min="1" max="20" value="${party.effectiveLevel}"></label><label>Party size<input data-testid="party-size" data-field="size" type="number" min="1" max="8" value="${party.size}"></label></div><label>Threat target<select data-testid="threat-target" data-field="threat">${["trivial","low","moderate","severe","extreme","custom"].map((kind) => `<option value="${kind}" ${target.kind === kind ? "selected" : ""}>${kind[0].toUpperCase() + kind.slice(1)}</option>`).join("")}</select></label><label data-testid="custom-xp-field" class="${target.kind === "custom" ? "" : "hidden"}">Custom XP<input data-testid="custom-xp" data-field="custom_xp" type="number" min="0" value="${target.customXP ?? 0}"></label></div></details></section>
-          <details class="rail-panel activity-panel"><summary><span>Recent changes</span><span class="connection-dot" title="${escapeHtml(uiState.webMCPStatus)}"></span></summary><ul>${activities || "<li class=empty>No mutations yet.</li>"}</ul></details>
+          <details class="rail-panel activity-panel"><summary><span>Recent changes</span>${connectionDot}</summary><ul>${activities || "<li class=empty>No mutations yet.</li>"}</ul></details>
         </aside>
       </div>
       ${agentShelfMarkup(snapshot, draft)}
@@ -526,7 +755,38 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
       ${modalMarkup("phase", "Encounter phase", `<div id="encounter-phase-root"></div>`, "modal-builder")}
       ${modalMarkup("transfer", "Components and library", transferBody, "modal-wide")}
       ${modalMarkup("export", "Export and print", exportBody, "modal-wide")}
+      ${modalMarkup("settings", "Settings", settingsBody, "modal-settings")}
+      ${modalMarkup("library-inspection", libraryInspection.title, libraryInspection.body, "modal-wide modal-inspection")}
     </div>`;
+  const titleNode = app.querySelector(".title-block h1");
+  if (titleNode) { titleNode.title = draft.title; titleNode.setAttribute("aria-label", draft.title); }
+
+  const activityList = app.querySelector(".agent-activity ul");
+  if (activityList) {
+    const nearBottom = previousActivityScroll && previousActivityScroll.height - previousActivityScroll.client - previousActivityScroll.top < 32;
+    activityList.scrollTop = nearBottom ? activityList.scrollHeight : (previousActivityScroll?.top ?? uiState.agentShelfScrollTop);
+    activityList.addEventListener("scroll", () => { uiState.agentShelfScrollTop = activityList.scrollTop; }, { passive: true });
+  }
+  const shelfElement = app.querySelector(".agent-shelf");
+  const topbarElement = app.querySelector(".topbar");
+  const updateTopbarOcclusion = () => document.documentElement.style.setProperty("--agent-topbar-occlusion", `${topbarElement?.getBoundingClientRect().height ?? 0}px`);
+  updateTopbarOcclusion();
+  if (topbarElement && typeof ResizeObserver === "function") {
+    const observer = new ResizeObserver(updateTopbarOcclusion);
+    observer.observe(topbarElement);
+    topbarElement._sidekickLayoutObserver = observer;
+  }
+  if (shelfElement) {
+    const updateShelfOcclusion = () => document.documentElement.style.setProperty("--agent-shelf-occlusion", `${shelfElement.getBoundingClientRect().height}px`);
+    updateShelfOcclusion();
+    if (typeof ResizeObserver === "function") {
+      const observer = new ResizeObserver(updateShelfOcclusion);
+      observer.observe(shelfElement);
+      shelfElement._sidekickLayoutObserver = observer;
+    }
+  } else document.documentElement.style.setProperty("--agent-shelf-occlusion", "0px");
+  globalThis.scrollTo?.(documentScroll.x, documentScroll.y);
+  restoreEditableFocus(focused, selection);
 
   const syncReusableLibrary = nextDraft => {
     const records = [
@@ -556,6 +816,7 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
     if (!restored.ok) return render({ asset, engine, catalog, catalogState: activeCatalogState, notice: restored.error?.message ?? "The saved encounter could not be opened." });
     engine.snapshot = restored.snapshot;
     await saveDraft(restored.snapshot.encounter ?? restored.snapshot.draft);
+    if (uiState.mode !== mode) globalThis.scrollTo?.(0, 0);
     uiState.mode = mode;
     uiState.activeModal = null;
     const nextDraft = restored.snapshot.encounter ?? restored.snapshot.draft;
@@ -576,48 +837,64 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
     }
   };
   app.querySelectorAll("[data-mode]").forEach(button => button.addEventListener("click", () => {
+    if (uiState.mode !== button.dataset.mode) globalThis.scrollTo?.(0, 0);
     uiState.mode = button.dataset.mode;
     uiState.activeModal = null;
     render({ asset, engine, catalog, catalogState: activeCatalogState, notice: `${button.textContent.trim()} workspace opened` });
   }));
-  app.querySelectorAll("[data-agent-toggle]").forEach(button => button.addEventListener("click", () => { uiState.agentShelf = uiState.agentShelf === "dismissed" ? "compact" : uiState.agentShelf === "compact" ? "expanded" : "compact"; render({ asset, engine, catalog, catalogState: activeCatalogState, notice }); }));
-  app.querySelector("[data-agent-expand]")?.addEventListener("click", () => { uiState.agentShelf = uiState.agentShelf === "expanded" ? "compact" : "expanded"; render({ asset, engine, catalog, catalogState: activeCatalogState, notice }); });
-  app.querySelector("[data-agent-dismiss]")?.addEventListener("click", () => { uiState.agentShelf = "dismissed"; render({ asset, engine, catalog, catalogState: activeCatalogState, notice }); });
-  app.querySelector("[data-generation-stop]")?.addEventListener("click", () => {
-    const result = issue(engine, generationCancellationCommand(draft, generation));
-    if (!result.ok) return render({ asset, engine: { ...engine, snapshot: result.snapshot }, catalog, catalogState: activeCatalogState, notice: result.error?.message });
-    engine.snapshot = result.snapshot;
-    uiState.agentEvents.unshift({ description: "Stopped encounter generation", detail: "Opening encounter restored" });
+  app.querySelectorAll("[data-agent-toggle]").forEach(button => button.addEventListener("click", () => { uiState.agentManualShelfOverride = true; uiState.agentShelf = uiState.agentShelf === "dismissed" ? "compact" : uiState.agentShelf === "compact" ? "expanded" : "compact"; render({ asset, engine, catalog, catalogState: activeCatalogState, notice }); }));
+  app.querySelector("[data-agent-expand]")?.addEventListener("click", () => { uiState.agentManualShelfOverride = true; uiState.agentShelf = uiState.agentShelf === "expanded" ? "compact" : "expanded"; render({ asset, engine, catalog, catalogState: activeCatalogState, notice }); });
+  app.querySelector("[data-agent-dismiss]")?.addEventListener("click", () => { uiState.agentManualShelfOverride = true; uiState.agentShelf = "dismissed"; render({ asset, engine, catalog, catalogState: activeCatalogState, notice }); });
+  app.querySelector("[data-generation-stop]")?.addEventListener("click", async () => {
+    const current = engine.snapshot?.encounter ?? draft;
+    const result = await globalThis.sidekickDM?.webMCP?.execute?.("sidekickdm_cancel_generation", { encounter_id: current.id, generation_run_id: current.generation?.id, expected_encounter_revision: current.revision });
+    if (!result?.ok) return render({ asset, engine, catalog, catalogState: activeCatalogState, notice: result?.error?.message ?? "Generation could not be stopped." });
     render({ asset, engine, catalog, catalogState: activeCatalogState, notice: "Generation stopped" });
   });
   app.querySelectorAll("[data-start-encounter]").forEach(button => button.addEventListener("click", async () => {
     uiState.runSession = currentRunSession(await loadStoreRecord("run_sessions", `run_${draft.id}`), draft, catalog);
+    if (uiState.mode !== "run") globalThis.scrollTo?.(0, 0);
     uiState.mode = "run";
     uiState.generationReview = false;
     await saveStoreRecord("run_sessions", uiState.runSession.id, uiState.runSession);
     render({ asset, engine, catalog, catalogState: activeCatalogState, notice: "Encounter started" });
   }));
   app.querySelector("[data-review-save]")?.addEventListener("click", async () => {
+    const save = globalThis.sidekickDM?.webMCP?.execute;
+    if (typeof save === "function") {
+      const result = await save("sidekickdm_save_encounter", { encounter_id: draft.id });
+      if (!result?.ok) render({ asset, engine, catalog, catalogState: activeCatalogState, notice: result?.error?.message ?? "Encounter could not be saved." });
+      return;
+    }
     await saveDraft(draft);
     uiState.restoredComponents = await encounterStore.readLibrary();
+    uiState.mode = "library";
+    uiState.libraryTab = "encounters";
+    uiState.librarySelection = draft.id;
+    uiState.agentEvents.unshift({ description: "Saved to the encounter library", detail: "Available from the Library.", status: "completed" });
     render({ asset, engine, catalog, catalogState: activeCatalogState, notice: "Encounter saved to the library" });
   });
   app.querySelectorAll("[data-library-tab]").forEach(button => button.addEventListener("click", () => { uiState.libraryTab = button.dataset.libraryTab; uiState.librarySelection = null; render({ asset, engine, catalog, catalogState: activeCatalogState, notice: `${button.textContent.trim()} library opened` }); }));
   app.querySelector("[data-library-query]")?.addEventListener("input", event => {
     uiState.libraryQuery = event.currentTarget.value;
     const query = uiState.libraryQuery.trim().toLowerCase();
-    const rows = [...app.querySelectorAll("[data-library-select]")];
-    rows.forEach(row => { row.hidden = Boolean(query) && !row.textContent.toLowerCase().includes(query); });
+    const rows = [...app.querySelectorAll("[data-library-select-record]")];
+    rows.forEach(row => { row.hidden = Boolean(query) && !(row.dataset.librarySearchText ?? row.textContent).toLowerCase().includes(query); });
     const empty = app.querySelector("[data-library-empty]");
     if (empty) empty.hidden = rows.some(row => !row.hidden);
   });
   app.querySelectorAll("[data-library-select-record]").forEach(button => button.addEventListener("click", () => { uiState.librarySelection = button.dataset.librarySelectRecord; render({ asset, engine, catalog, catalogState: activeCatalogState, notice }); }));
+  app.querySelectorAll("[data-library-inspect-kind]").forEach(button => button.addEventListener("click", () => {
+    uiState.libraryInspection = { kind: button.dataset.libraryInspectKind, encounterID: button.dataset.libraryInspectEncounter, componentID: button.dataset.libraryInspectComponent };
+    uiState.activeModal = "library-inspection";
+    render({ asset, engine, catalog, catalogState: activeCatalogState, notice: `${button.getAttribute("aria-label")} opened` });
+  }));
   app.querySelectorAll("[data-library-open]").forEach(button => button.addEventListener("click", () => { const encounter = (uiState.restoredComponents?.encounters ?? []).find(item => item.id === button.dataset.libraryOpen) ?? (draft.id === button.dataset.libraryOpen ? draft : null); if (encounter) void loadEncounter(encounter, "build"); }));
   app.querySelectorAll("[data-library-run]").forEach(button => button.addEventListener("click", () => { const encounter = (uiState.restoredComponents?.encounters ?? []).find(item => item.id === button.dataset.libraryRun) ?? (draft.id === button.dataset.libraryRun ? draft : null); if (encounter) void loadEncounter(encounter, "run"); }));
   app.querySelector("[data-library-new-creature]")?.addEventListener("click", () => { uiState.creature = createEmptyOriginalCreature(); uiState.replacingParticipantID = null; uiState.activeModal = "creature"; render({ asset, engine, catalog, catalogState: activeCatalogState, notice: "New creature ready" }); });
-  app.querySelector("[data-library-new-encounter]")?.addEventListener("click", () => { uiState.mode = "build"; mutate({ command: "sidekickdm_create_encounter", title: "Untitled Encounter", effective_level: Number(party.effectiveLevel), size: Number(party.size), kind: target.kind, custom_xp: target.kind === "custom" ? Number(target.customXP ?? 0) : null }, "New encounter ready" ); });
+  app.querySelector("[data-library-new-encounter]")?.addEventListener("click", () => { if (uiState.mode !== "build") globalThis.scrollTo?.(0, 0); uiState.mode = "build"; mutate({ command: "sidekickdm_create_encounter", title: "Untitled Encounter", effective_level: Number(party.effectiveLevel), size: Number(party.size), kind: target.kind, custom_xp: target.kind === "custom" ? Number(target.customXP ?? 0) : null }, "New encounter ready" ); });
   app.querySelectorAll("[data-library-edit-creature]").forEach(button => button.addEventListener("click", () => { const creature = (uiState.restoredComponents?.creatures ?? []).find(item => item.id === button.dataset.libraryEditCreature) ?? (draft.originalCreatures ?? []).find(item => item.id === button.dataset.libraryEditCreature); if (!creature) return; uiState.creature = structuredClone(creature); uiState.replacingParticipantID = null; uiState.activeModal = "creature"; render({ asset, engine, catalog, catalogState: activeCatalogState, notice: "Custom creature opened" }); }));
-  app.querySelectorAll("[data-library-add-creature]").forEach(button => button.addEventListener("click", () => { const creature = (uiState.restoredComponents?.creatures ?? []).find(item => item.id === button.dataset.libraryAddCreature) ?? (draft.originalCreatures ?? []).find(item => item.id === button.dataset.libraryAddCreature); if (creature) { uiState.mode = "build"; mutate({ command: "sidekickdm_create_custom_creature", creature, quantity: 1 }, `${creature.identity?.name ?? creature.name} added from the custom library`); } }));
+  app.querySelectorAll("[data-library-add-creature]").forEach(button => button.addEventListener("click", () => { const creature = (uiState.restoredComponents?.creatures ?? []).find(item => item.id === button.dataset.libraryAddCreature) ?? (draft.originalCreatures ?? []).find(item => item.id === button.dataset.libraryAddCreature); if (creature) { if (uiState.mode !== "build") globalThis.scrollTo?.(0, 0); uiState.mode = "build"; mutate({ command: "sidekickdm_create_custom_creature", creature, quantity: 1 }, `${creature.identity?.name ?? creature.name} added from the custom library`); } }));
   app.querySelectorAll("[data-run-select]").forEach(button => button.addEventListener("click", () => updateRun({ type: "select", combatantID: button.dataset.runSelect }, "Combatant inspected")));
   app.querySelectorAll("[data-run-initiative]").forEach(field => {
     const commit = () => updateRun({ type: "set_initiative", combatantID: field.dataset.runInitiative, value: field.value }, "Initiative updated");
@@ -638,6 +915,20 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
   }));
   app.querySelectorAll("[data-modal-close]").forEach(button => button.addEventListener("click", () => { uiState.activeModal = null; button.closest("dialog")?.close(); }));
   app.querySelectorAll("dialog").forEach(dialog => dialog.addEventListener("cancel", () => { uiState.activeModal = null; }));
+  app.querySelector("[data-request-clear-local-data]")?.addEventListener("click", () => { uiState.confirmClearLocalData = true; render({ asset, engine, catalog, catalogState: activeCatalogState, notice }); });
+  app.querySelector("[data-cancel-clear-local-data]")?.addEventListener("click", () => { uiState.confirmClearLocalData = false; render({ asset, engine, catalog, catalogState: activeCatalogState, notice }); });
+  app.querySelector("[data-confirm-clear-local-data]")?.addEventListener("click", async () => {
+    uiState.clearingLocalData = true;
+    render({ asset, engine, catalog, catalogState: activeCatalogState, notice: "Clearing local Sidekick data…" });
+    try {
+      await encounterStore.clearLocalData();
+      globalThis.location.reload();
+    } catch (error) {
+      uiState.clearingLocalData = false;
+      uiState.confirmClearLocalData = false;
+      render({ asset, engine, catalog, catalogState: activeCatalogState, notice: error instanceof Error ? error.message : String(error) });
+    }
+  });
   app.querySelectorAll("[data-field]").forEach((field) => field.addEventListener("change", () => {
     const key = field.dataset.field;
     if (key === "effective_level" || key === "size") mutate({ command: "sidekickdm_set_party_snapshot", effective_level: Number(app.querySelector('[data-field="effective_level"]').value), size: Number(app.querySelector('[data-field="size"]').value) }, "Party Snapshot saved");
@@ -865,6 +1156,53 @@ try {
   const webMCP = createWebMCPAdapter({
     engine: loaded.engine,
     catalog,
+    onToolActivity: event => {
+      if (event.phase) uiState.agentPhase = event.phase;
+      if (event.target?.kind === "encounter" && event.encounter_label) uiState.agentTargetLabel = event.encounter_label;
+      else if (event.status === "started" && event.target_label) uiState.agentTargetLabel = event.target_label;
+      if (event.status !== "started" && event.ui_target?.id) {
+        uiState.agentTargetID = event.ui_target.id;
+        uiState.agentTargetLabel = event.ui_target.label ?? uiState.agentTargetLabel;
+        if (event.status === "completed") markAgentTarget(event.ui_target.id);
+      }
+      if (event.status === "started") {
+        if (event.tool_name === "sidekickdm_begin_generation") {
+          // A new run gets one automatic reveal. A click made while it is
+          // starting sets the manual override again before completion.
+          uiState.agentManualShelfOverride = false;
+          uiState.agentAutoExpandedRunID = null;
+        }
+        uiState.agentBusyEvents[event.event_id] = event;
+      }
+      else {
+        delete uiState.agentBusyEvents[event.event_id];
+        if (event.status === "canceled") uiState.agentAutoExpandedRunID = null;
+        uiState.agentEvents.unshift({ ...event, description: event.summary, detail: event.detail ?? (event.status === "failed" ? (event.error?.message ?? "Needs attention") : event.status === "canceled" ? "Opening encounter restored" : null), diagnostics: event.error ? `${event.error.code}: ${event.error.message}` : null });
+        if (event.preview) {
+          uiState.agentPreview = { ...event.preview, eventID: event.event_id };
+          if (uiState.agentPreviewTimer) clearTimeout(uiState.agentPreviewTimer);
+          uiState.agentPreviewTimer = setTimeout(() => {
+            if (uiState.agentPreview?.eventID !== event.event_id) return;
+            uiState.agentPreview = null;
+            if (globalThis.sidekickDM && globalThis.document?.visibilityState !== "hidden") render({ asset: loaded.asset, engine: loaded.engine, catalog });
+          }, 10_000);
+        }
+        if (event.status === "completed" && event.tool_name === "sidekickdm_begin_generation" && event.generation_run_id && uiState.agentAutoExpandedRunID !== event.generation_run_id && !uiState.agentManualShelfOverride) {
+          uiState.agentAutoExpandedRunID = event.generation_run_id;
+          if (uiState.agentShelf !== "expanded") uiState.agentShelf = "expanded";
+        }
+      }
+      uiState.agentEvents = uiState.agentEvents.slice(0, 50);
+      if (globalThis.sidekickDM && globalThis.document?.visibilityState !== "hidden") {
+        render({ asset: loaded.asset, engine: loaded.engine, catalog });
+        if (event.status === "completed") setTimeout(() => revealAgentTarget(event.ui_target?.id), 0);
+      }
+    },
+    onConnectionChange: connection => {
+      uiState.webMCPState = connection.state;
+      uiState.webMCPStatus = connection.label;
+      if (globalThis.sidekickDM && globalThis.document?.visibilityState !== "hidden") render({ asset: loaded.asset, engine: loaded.engine, catalog });
+    },
     getLibrary: async () => encounterStore.readLibrary(),
     saveLibraryCreature: async creature => {
       await encounterStore.saveLibraryRecord("creature", creature);
@@ -876,14 +1214,18 @@ try {
     saveEncounter: async draft => {
       await saveDraft(draft);
       uiState.restoredComponents = await encounterStore.readLibrary();
+      uiState.mode = "library";
+      uiState.libraryTab = "encounters";
+      uiState.librarySelection = draft.id;
+      if (!uiState.agentManualShelfOverride) uiState.agentShelf = "compact";
       uiState.agentTargetID = draft.id;
       uiState.agentTargetLabel = draft.title;
-      uiState.agentEvents.unshift({ description: `Saved ${draft.title} to the encounter library`, detail: null });
       return draft;
     },
     getRunSession: async () => uiState.runSession,
     startRun: async draft => {
       uiState.runSession = currentRunSession(await loadStoreRecord("run_sessions", `run_${draft.id}`), draft, catalog);
+      if (uiState.mode !== "run") globalThis.scrollTo?.(0, 0);
       uiState.mode = "run";
       await saveStoreRecord("run_sessions", uiState.runSession.id, uiState.runSession);
       render({ asset: loaded.asset, engine: loaded.engine, catalog, notice: "Agent opened the live encounter" });
@@ -895,10 +1237,12 @@ try {
       const target = uiState.runSession.combatants.find(item => item.id === uiState.runSession.lastTargetID);
       uiState.agentTargetID = uiState.runSession.lastTargetID;
       uiState.agentTargetLabel = target?.name ?? "Live encounter";
+      markAgentTarget(uiState.agentTargetID);
       render({ asset: loaded.asset, engine: loaded.engine, catalog, notice: `Agent updated ${uiState.agentTargetLabel}` });
+      setTimeout(() => revealAgentTarget(uiState.agentHighlightID), 0);
       return uiState.runSession;
     },
-    onMutation: async (draft, _result, command) => {
+    onMutation: async (draft, _result, command, projection) => {
       await saveDraft(draft);
       uiState.restoredComponents = await encounterStore.readLibrary();
       const creatureID = command?.creature?.id;
@@ -911,21 +1255,22 @@ try {
         uiState.generationReview = false;
       }
       if (command?.command === "sidekickdm_create_encounter") uiState.groupLabels = {};
-      if (command?.command === "sidekickdm_finish_generation") uiState.generationReview = true;
-      if (group && command?.faction) {
-        uiState.groupLabels[group.id] = command.faction;
-        await saveStoreRecord("library_metadata", `group_labels_${draft.id}`, uiState.groupLabels);
+      if (command?.command === "sidekickdm_finish_generation") {
+        uiState.generationReview = true;
+        if (!uiState.agentManualShelfOverride && uiState.agentShelf === "expanded") uiState.agentShelf = "compact";
       }
-      uiState.agentTargetID = group?.id ?? command?.component_id ?? draft.id;
-      uiState.agentTargetLabel = command?.faction ?? group?.name ?? command?.creature?.identity?.name ?? command?.section ?? draft.title;
-      uiState.agentEvents.unshift(summarizeAgentCommand(command, draft, group && command?.faction ? { ...group, name: command.faction } : group, loaded.engine.snapshot.budget));
+      const projectedTarget = projection?.ui_target ?? null;
+      uiState.agentTargetID = projectedTarget?.id ?? group?.id ?? command?.component_id ?? draft.id;
+      uiState.agentTargetLabel = projectedTarget?.label ?? command?.display_name ?? group?.displayName ?? group?.name ?? command?.creature?.identity?.name ?? command?.section ?? draft.title;
+      markAgentTarget(uiState.agentTargetID);
       uiState.agentEvents = uiState.agentEvents.slice(0, 50);
       render({ asset: loaded.asset, engine: loaded.engine, catalog, notice: `Agent updated ${uiState.agentTargetLabel}` });
+      setTimeout(() => revealAgentTarget(uiState.agentHighlightID), 0);
     }
   });
   const webMCPConnection = await webMCP.register();
   uiState.webMCPStatus = webMCPConnection.label;
-  if (webMCPConnection.available) uiState.agentShelf = "compact";
+  uiState.webMCPState = webMCP.getConnectionStatus().state;
   globalThis.sidekickDM = Object.freeze({ asset: loaded.asset, engine: loaded.engine, catalog, webMCP, bridge: globalThis.sidekickBridge, persistence: { loadSavedDraft, saveDraft, loadRecord, saveRecord }, run: { get: () => projectRunSession(uiState.runSession), action: action => applyRunAction(uiState.runSession, action) }, actions: { exportEncounter: () => encounterJSON(loaded.engine, catalog), printEncounter: () => encounterPrintHTML(loaded.engine, catalog) } });
   render({ asset: loaded.asset, engine: loaded.engine, catalog, notice: saved ? "Encounter Draft reloaded from IndexedDB." : "New Encounter Draft ready." });
 } catch (error) { app.innerHTML = `<section class="panel error"><h1>Sidekick DM could not load</h1><p>${escapeHtml(error instanceof Error ? error.message : error)}</p></section>`; }

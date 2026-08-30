@@ -67,11 +67,21 @@ const complexHazardXP = [10, 15, 20, 30, 40, 60, 80, 120, 150];
 function relativeValue(table, relative, above) { return relative < -4 ? 0 : relative > 4 ? above : table[relative + 4]; }
 function adjustedLevel(level, adjustment) { return Number(level) + (adjustment === "weak" ? -1 : adjustment === "elite" ? 1 : 0); }
 
+export function hazardXPForLevel(level, partyLevel = 1, complexity = "simple") {
+  const table = complexity === "complex" ? complexHazardXP : simpleHazardXP;
+  const relative = Number(level ?? partyLevel) - Number(partyLevel);
+  return relativeValue(table, relative, complexity === "complex" ? 150 : 30);
+}
+
+export function creatureXPForLevel(level, partyLevel = 1, quantity = 1, adjustment = "normal") {
+  return relativeValue(creatureXP, adjustedLevel(level ?? partyLevel, adjustment) - Number(partyLevel), 160) * Math.max(0, Number(quantity ?? 1));
+}
+
 export function projectPhaseXP(phase, { participantGroups = [], hazards = [], partyLevel = 1 } = {}) {
   const participation = { mandatoryXP: 0, avoidableXP: 0, conditionalXP: 0, reinforcementXP: 0 };
   const add = (xp, mode) => { const key = mode === "mandatory" ? "mandatoryXP" : mode === "avoidable" ? "avoidableXP" : mode === "reinforcement" ? "reinforcementXP" : "conditionalXP"; participation[key] += xp; };
-  for (const group of participantGroups ?? []) if ((phase.participantIDs ?? []).includes(group.id)) add(relativeValue(creatureXP, adjustedLevel(group.level ?? partyLevel, group.adjustment) - partyLevel, 160) * Math.max(0, Number(group.quantity ?? 1)), group.participation?.mode ?? "mandatory");
-  for (const hazard of hazards ?? []) if ((phase.hazardIDs ?? []).includes(hazard.id)) add(relativeValue((hazard.complexity ?? "simple") === "complex" ? complexHazardXP : simpleHazardXP, Number(hazard.level ?? partyLevel) - partyLevel, (hazard.complexity ?? "simple") === "complex" ? 150 : 30), hazard.participation?.mode ?? "mandatory");
+  for (const group of participantGroups ?? []) if ((phase.participantIDs ?? []).includes(group.id)) add(creatureXPForLevel(group.level ?? partyLevel, partyLevel, group.quantity, group.adjustment), group.participation?.mode ?? "mandatory");
+  for (const hazard of hazards ?? []) if ((phase.hazardIDs ?? []).includes(hazard.id)) add(hazardXPForLevel(hazard.level ?? partyLevel, partyLevel, hazard.complexity), hazard.participation?.mode ?? "mandatory");
   return { phaseID: phase.id, title: phase.title, participantIDs: [...(phase.participantIDs ?? [])], hazardIDs: [...(phase.hazardIDs ?? [])], participation, activeXP: Object.values(participation).reduce((sum, value) => sum + value, 0), terrainAdjustment: Number(phase.terrainAdjustment ?? 0) };
 }
 
@@ -83,8 +93,8 @@ export function projectPhasesToPacket(document = {}) {
   const aggregate = { mandatoryXP: 0, avoidableXP: 0, conditionalXP: 0, reinforcementXP: 0 };
   const add = (xp, mode) => { const key = mode === "mandatory" ? "mandatoryXP" : mode === "avoidable" ? "avoidableXP" : mode === "reinforcement" ? "reinforcementXP" : "conditionalXP"; aggregate[key] += xp; };
   const partyLevel = Number(document.partyLevel ?? document.brief?.party?.effectiveLevel ?? document.brief?.party?.effective_level ?? 1);
-  for (const group of groups) add(relativeValue(creatureXP, adjustedLevel(group.level ?? partyLevel, group.adjustment) - partyLevel, 160) * Math.max(0, Number(group.quantity ?? 1)), group.participation?.mode ?? "mandatory");
-  for (const hazard of hazards) { const complexity = hazard.complexity ?? "simple"; add(relativeValue(complexity === "complex" ? complexHazardXP : simpleHazardXP, Number(hazard.level ?? partyLevel) - partyLevel, complexity === "complex" ? 150 : 30), hazard.participation?.mode ?? "mandatory"); }
+  for (const group of groups) add(creatureXPForLevel(group.level ?? partyLevel, partyLevel, group.quantity, group.adjustment), group.participation?.mode ?? "mandatory");
+  for (const hazard of hazards) add(hazardXPForLevel(hazard.level ?? partyLevel, partyLevel, hazard.complexity), hazard.participation?.mode ?? "mandatory");
   const warnings = [];
   phases.forEach((phase, index) => phases.slice(index + 1).forEach(other => {
     const shared = [...new Set([...(phase.participantIDs ?? []), ...(phase.hazardIDs ?? [])].filter(id => [...(other.participantIDs ?? []), ...(other.hazardIDs ?? [])].includes(id)))];

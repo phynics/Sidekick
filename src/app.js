@@ -20,7 +20,7 @@ const STORAGE_VERSION = 3;
 const STORAGE_STORES = ["encounters", "creatures", "npc_profiles", "hazards", "party_profiles", "attachments", "library_metadata", "run_sessions"];
 const encounterStore = new IndexedDBEncounterStore({ database: STORAGE_DB, version: STORAGE_VERSION, stores: STORAGE_STORES });
 const uiState = {
-  mode: "build",
+  mode: "library",
   libraryTab: "encounters",
   libraryQuery: "",
   librarySelection: null,
@@ -504,15 +504,23 @@ function encounterDetailsMarkup(record, catalog) {
   return `<div class="encounter-roster-disclosures">${disclosure({ kind: "enemies", label: encounterEnemyLabel(summary.enemyCount), count: summary.enemyCount, xp: summary.creatureXP, items: groups, empty: "No enemies in this encounter." })}${disclosure({ kind: "hazards", label: encounterHazardLabel(summary.hazardCount), count: summary.hazardCount, xp: summary.hazardXP, items: hazards, empty: "No hazards in this encounter." })}</div><dl class="encounter-summary-facts"><div><dt>Levels</dt><dd>${escapeHtml(formatEncounterLevels(summary.allLevels))}</dd></div><div><dt>Total XP</dt><dd>${escapeHtml(summary.totalXP)}</dd></div></dl>`;
 }
 
-function libraryWorkspaceMarkup(draft, catalog) {
+function libraryRecords(draft) {
   const library = uiState.restoredComponents ?? {};
   const encounters = [...new Map([...(library.encounters ?? []), draft].filter(Boolean).map(record => [record.id, record])).values()];
   const creatures = [...new Map([...(library.creatures ?? []), ...(draft.originalCreatures ?? [])].filter(record => record && (record.identity?.name ?? record.name)).map(record => [record.id, record])).values()];
+  return { encounters, creatures };
+}
+
+function selectedLibraryRecord(draft) {
+  const records = libraryRecords(draft);
+  return (uiState.libraryTab === "creatures" ? records.creatures : records.encounters).find(record => record.id === uiState.librarySelection) ?? null;
+}
+
+function libraryWorkspaceMarkup(draft, catalog) {
+  const { encounters, creatures } = libraryRecords(draft);
   const records = uiState.libraryTab === "creatures" ? creatures : encounters;
   const query = uiState.libraryQuery.trim().toLowerCase();
   const filtered = records.filter(record => !query || (uiState.libraryTab === "encounters" ? encounterSearchText(record, catalog) : [record.identity?.name, record.name, record.summary, ...(record.identity?.traits ?? []), ...(record.traits ?? []), record.identity?.level, record.level].filter(Boolean).join(" ").toLowerCase()).includes(query));
-  if (!filtered.some(record => record.id === uiState.librarySelection)) uiState.librarySelection = filtered[0]?.id ?? null;
-  const selected = filtered.find(record => record.id === uiState.librarySelection) ?? null;
   const rows = filtered.map(record => {
     const creature = uiState.libraryTab === "creatures";
     const name = creature ? record.identity?.name ?? record.name ?? record.id : record.title ?? record.id;
@@ -522,18 +530,24 @@ function libraryWorkspaceMarkup(draft, catalog) {
     const searchText = creature
       ? [record.identity?.name, record.name, record.summary, ...(record.identity?.traits ?? []), ...(record.traits ?? []), record.identity?.level, record.level].filter(Boolean).join(" ").toLowerCase()
       : encounterSearchText(record, catalog);
-    return `<button type="button" class="library-row ${record.id === selected?.id ? "is-selected" : ""}" data-library-select-record="${escapeHtml(record.id)}" data-agent-target="${escapeHtml(record.id)}" data-library-search-text="${escapeHtml(searchText)}"><span><strong>${escapeHtml(name)}</strong><small>${metadata}</small></span><span class="row-arrow" aria-hidden="true">›</span></button>`;
+    return `<button type="button" class="library-row" data-library-select-record="${escapeHtml(record.id)}" data-agent-target="${escapeHtml(record.id)}" data-library-search-text="${escapeHtml(searchText)}" aria-label="Open ${escapeHtml(name)}"><span><strong>${escapeHtml(name)}</strong><small>${metadata}</small></span><span class="row-arrow" aria-hidden="true">›</span></button>`;
   }).join("");
-  let preview = `<section class="library-empty"><p class="eyebrow">Nothing saved here yet</p><h2>Start from the library</h2><p>Create a ${uiState.libraryTab === "creatures" ? "monster" : "new encounter"} and Sidekick will keep it here.</p></section>`;
-  if (selected && uiState.libraryTab === "encounters") {
+  return `<section class="library-workspace" data-testid="library-workspace"><header class="workspace-heading"><div><p class="eyebrow">Your reusable material</p><h1>Library</h1><p>Choose an encounter to review, edit, or run it.</p></div><div class="library-create-actions"><button type="button" class="button-secondary" data-library-new-creature>New creature</button><button type="button" class="primary" data-library-new-encounter>New encounter</button></div></header><div class="library-tabs" role="tablist"><button type="button" role="tab" data-library-tab="encounters" aria-selected="${uiState.libraryTab === "encounters"}">Encounters <span>${encounters.length}</span></button><button type="button" role="tab" data-library-tab="creatures" aria-selected="${uiState.libraryTab === "creatures"}">Creatures <span>${creatures.length}</span></button></div><div class="library-index"><label class="library-search">Search ${escapeHtml(uiState.libraryTab)}<input data-library-query value="${escapeHtml(uiState.libraryQuery)}" placeholder="Search by name"></label><div class="library-list">${rows || `<section class="library-empty"><p class="eyebrow">Nothing saved here yet</p><h2>Start from the library</h2><p>Create a ${uiState.libraryTab === "creatures" ? "monster" : "new encounter"} and Sidekick will keep it here.</p></section>`}<p class="empty" data-library-empty hidden>No matching ${escapeHtml(uiState.libraryTab)}.</p></div></div></section>`;
+}
+
+function libraryDetailWorkspaceMarkup(draft, catalog) {
+  const selected = selectedLibraryRecord(draft);
+  if (!selected) return `<section class="library-detail-workspace" data-testid="library-detail"><header class="detail-toolbar"><button type="button" class="button-quiet" data-library-back>← Library</button></header><section class="library-empty"><p class="eyebrow">Nothing selected</p><h2>Return to the Library</h2><p>Choose an encounter or creature to inspect it.</p></section></section>`;
+  let detail;
+  if (uiState.libraryTab === "encounters") {
     const party = selected.brief?.party ?? {};
     const target = selected.brief?.threatTarget ?? {};
-    preview = `<section class="library-preview" data-testid="library-preview" data-agent-target="${escapeHtml(selected.id)}"><p class="eyebrow">Saved encounter</p><h2>${escapeHtml(selected.title)}</h2><p>${escapeHtml(selected.packetV1?.identity?.premise ?? selected.brief?.creative?.premise ?? "No premise recorded.")}</p><dl><div><dt>Party</dt><dd>${escapeHtml(party.size ?? "?")} heroes · level ${escapeHtml(party.effectiveLevel ?? "?")}</dd></div><div><dt>Target</dt><dd>${escapeHtml(target.kind ?? "unrated")}</dd></div></dl>${encounterDetailsMarkup(selected, catalog)}<div class="library-preview-actions"><button type="button" class="primary" data-library-run="${escapeHtml(selected.id)}">Run encounter</button><button type="button" class="button-secondary" data-library-open="${escapeHtml(selected.id)}">Open in Build</button></div></section>`;
-  } else if (selected) {
+    detail = `<section class="library-preview library-detail-card" data-testid="library-preview" data-agent-target="${escapeHtml(selected.id)}"><p class="eyebrow">Saved encounter</p><h1>${escapeHtml(selected.title)}</h1><p>${escapeHtml(selected.packetV1?.identity?.premise ?? selected.brief?.creative?.premise ?? "No premise recorded.")}</p><dl><div><dt>Party</dt><dd>${escapeHtml(party.size ?? "?")} heroes · level ${escapeHtml(party.effectiveLevel ?? "?")}</dd></div><div><dt>Target</dt><dd>${escapeHtml(target.kind ?? "unrated")}</dd></div></dl>${encounterDetailsMarkup(selected, catalog)}<div class="library-preview-actions"><button type="button" class="primary" data-library-run="${escapeHtml(selected.id)}">Run encounter</button><button type="button" class="button-secondary" data-library-open="${escapeHtml(selected.id)}">Edit encounter</button></div></section>`;
+  } else {
     const defenses = selected.defenses ?? selected.detail?.defenses ?? {};
-    preview = `<section class="library-preview" data-testid="library-preview"><p class="eyebrow">Custom creature</p><h2>${escapeHtml(selected.identity?.name ?? selected.name)}</h2><p>${escapeHtml(selected.identity?.summary ?? selected.summary ?? "Reusable custom monster")}</p><div class="preview-stat-line"><span>Level <strong>${escapeHtml(selected.identity?.level ?? selected.level ?? "?")}</strong></span><span>AC <strong>${escapeHtml(statisticNumber(defenses.ac) ?? "?")}</strong></span><span>HP <strong>${escapeHtml(statisticNumber(defenses.hp) ?? "?")}</strong></span></div><p class="provenance-note">${selected.provenance?.origin === "forked" ? `Based on ${escapeHtml(selected.provenance?.basedOnContentID ?? "a compendium creature")}` : "Original custom creature"}</p><div class="library-preview-actions"><button type="button" class="primary" data-library-edit-creature="${escapeHtml(selected.id)}">Edit creature</button><button type="button" class="button-secondary" data-library-add-creature="${escapeHtml(selected.id)}">Add to encounter</button></div></section>`;
+    detail = `<section class="library-preview library-detail-card" data-testid="library-preview"><p class="eyebrow">Custom creature</p><h1>${escapeHtml(selected.identity?.name ?? selected.name)}</h1><p>${escapeHtml(selected.identity?.summary ?? selected.summary ?? "Reusable custom monster")}</p><div class="preview-stat-line"><span>Level <strong>${escapeHtml(selected.identity?.level ?? selected.level ?? "?")}</strong></span><span>AC <strong>${escapeHtml(statisticNumber(defenses.ac) ?? "?")}</strong></span><span>HP <strong>${escapeHtml(statisticNumber(defenses.hp) ?? "?")}</strong></span></div><p class="provenance-note">${selected.provenance?.origin === "forked" ? `Based on ${escapeHtml(selected.provenance?.basedOnContentID ?? "a compendium creature")}` : "Original custom creature"}</p><div class="library-preview-actions"><button type="button" class="primary" data-library-edit-creature="${escapeHtml(selected.id)}">Edit creature</button><button type="button" class="button-secondary" data-library-add-creature="${escapeHtml(selected.id)}">Add to current encounter</button></div></section>`;
   }
-  return `<section class="library-workspace" data-testid="library-workspace"><header class="workspace-heading"><div><p class="eyebrow">Your reusable material</p><h1>Library</h1></div><div class="library-create-actions"><button type="button" class="button-secondary" data-library-new-creature>New creature</button><button type="button" class="primary" data-library-new-encounter>New encounter</button></div></header><div class="library-tabs" role="tablist"><button type="button" role="tab" data-library-tab="encounters" aria-selected="${uiState.libraryTab === "encounters"}">Encounters <span>${encounters.length}</span></button><button type="button" role="tab" data-library-tab="creatures" aria-selected="${uiState.libraryTab === "creatures"}">Creatures <span>${creatures.length}</span></button></div><div class="library-layout"><section class="library-list-panel"><label class="library-search">Search ${escapeHtml(uiState.libraryTab)}<input data-library-query value="${escapeHtml(uiState.libraryQuery)}" placeholder="Search by name"></label><div class="library-list">${rows || `<p class="empty">No matching ${escapeHtml(uiState.libraryTab)}.</p>`}<p class="empty" data-library-empty hidden>No matching ${escapeHtml(uiState.libraryTab)}.</p></div></section>${preview}</div></section>`;
+  return `<section class="library-detail-workspace" data-testid="library-detail"><header class="detail-toolbar"><button type="button" class="button-quiet" data-library-back>← Library</button><span>${escapeHtml(uiState.libraryTab === "encounters" ? "Encounter details" : "Creature details")}</span></header>${detail}</section>`;
 }
 
 function runLogLabel(entry, combatants) {
@@ -557,7 +571,7 @@ function currentRunSession(session, encounter, catalog) {
 function runWorkspaceMarkup(draft, catalog) {
   if (!runSessionMatchesEncounter(uiState.runSession, draft)) {
     const count = (draft.participantGroups ?? []).reduce((sum, group) => sum + Number(group.quantity ?? 1), 0);
-    return `<section class="run-workspace run-start" data-testid="run-workspace"><div><p class="eyebrow">Ready when you are</p><h1>Start ${escapeHtml(draft.title)}</h1><p>Starting creates a fresh initiative order and session log. Your encounter remains editable until then.</p><dl><div><dt>Opposition</dt><dd>${escapeHtml(count)} creatures</dd></div><div><dt>Party</dt><dd>${escapeHtml(draft.brief?.party?.size ?? 4)} heroes · level ${escapeHtml(draft.brief?.party?.effectiveLevel ?? 1)}</dd></div></dl><div class="run-start-actions"><button type="button" class="primary" data-start-encounter>Start encounter</button><button type="button" class="button-secondary" data-mode="build">Back to Build</button><button type="button" class="button-secondary" data-modal-open="run">Review packet</button></div></div></section>`;
+    return `<section class="run-workspace run-start" data-testid="run-workspace"><div><p class="eyebrow">Ready when you are</p><h1>Start ${escapeHtml(draft.title)}</h1><p>Starting creates a fresh initiative order and session log. Your encounter remains editable until then.</p><dl><div><dt>Opposition</dt><dd>${escapeHtml(count)} creatures</dd></div><div><dt>Party</dt><dd>${escapeHtml(draft.brief?.party?.size ?? 4)} heroes · level ${escapeHtml(draft.brief?.party?.effectiveLevel ?? 1)}</dd></div></dl><div class="run-start-actions"><button type="button" class="primary" data-start-encounter>Start encounter</button><button type="button" class="button-secondary" data-back-to-detail>Back to encounter</button><button type="button" class="button-secondary" data-modal-open="run">Review packet</button></div></div></section>`;
   }
   const session = uiState.runSession;
   const ordered = session.combatants.map((combatant, index) => ({ combatant, index })).sort((left, right) => {
@@ -586,7 +600,7 @@ function runWorkspaceMarkup(draft, catalog) {
     sheet = `<section class="combatant-sheet ${selected.id === uiState.agentHighlightID ? "agent-target" : ""}" data-agent-target="${escapeHtml(selected.id)}"><header class="combatant-heading"><div><p class="eyebrow">${escapeHtml(selected.kind)} · level ${escapeHtml(selected.level ?? "—")}</p><h2>${escapeHtml(selected.name)}</h2></div><div class="hp-display"><strong>${escapeHtml(selected.currentHP ?? "—")}</strong><span>/ ${escapeHtml(selected.maxHP ?? "—")} HP</span></div></header><div class="hp-track"><span style="width:${hpPercent}%"></span></div><form class="hp-controls" data-run-hp-form="${escapeHtml(selected.id)}"><input name="amount" type="number" min="0" value="1" aria-label="HP amount"><button type="submit" name="operation" value="damage" class="button-damage">Damage</button><button type="submit" name="operation" value="healing" class="button-healing">Heal</button></form><div class="run-stat-ribbon">${stats}</div><section class="condition-section"><div class="section-heading compact"><div><p class="eyebrow">Persistent effects</p><h3>Conditions</h3></div></div><div class="condition-list">${conditions || "<span class=empty>No conditions</span>"}</div><form class="condition-form" data-run-condition-form="${escapeHtml(selected.id)}"><input name="name" placeholder="Condition" required><input name="value" type="number" min="0" placeholder="Value" aria-label="Condition value"><button type="submit">Add condition</button></form></section><section class="run-mechanics"><div><p class="eyebrow">Offense</p><h3>Attacks</h3><ul class="run-strikes">${strikes || "<li class=empty>No attacks recorded.</li>"}</ul></div><div><p class="eyebrow">Rules reference</p><h3>Abilities</h3><div class="run-abilities">${abilities || "<p class=empty>No abilities recorded.</p>"}</div></div></section></section>`;
   }
   const log = [...session.log].reverse().slice(0, 30).map(entry => `<li class="log-${escapeHtml(entry.kind)}"><span>${escapeHtml(runLogLabel(entry, session.combatants))}</span><small>Round ${escapeHtml(entry.round)}</small></li>`).join("");
-  return `<section class="run-workspace" data-testid="run-workspace"><header class="run-toolbar"><div><p class="eyebrow">At the table</p><h1>${escapeHtml(draft.title)}</h1></div><div class="round-control"><span>Round</span><strong data-testid="run-round">${escapeHtml(session.round)}</strong></div><div class="turn-controls"><button type="button" data-run-action="previous_turn">Previous turn</button><button type="button" class="primary" data-run-action="next_turn">Next turn</button><button type="button" class="button-secondary" data-modal-open="run">View packet</button></div></header><div class="run-layout"><aside class="initiative-rail"><div class="rail-heading"><div><p class="eyebrow">Turn order</p><h2>Initiative</h2></div><span>${session.combatants.length}</span></div><div class="initiative-list">${initiative || (!partySetup ? "<p class=empty>No combatants.</p>" : "")}${partySetup}</div></aside><main class="run-stage">${sheet}</main><aside class="roll-log"><div class="rail-heading"><div><p class="eyebrow">Session record</p><h2>Dice and log</h2></div></div><form class="quick-roll" data-run-quick-roll><label>Quick roll<input name="expression" value="1d20" aria-label="Dice expression"></label><button type="submit">Roll</button></form><ul>${log || "<li class=empty>No rolls or changes yet.</li>"}</ul></aside></div></section>`;
+  return `<section class="run-workspace" data-testid="run-workspace"><header class="run-toolbar"><div><p class="eyebrow">At the table</p><h1>${escapeHtml(draft.title)}</h1></div><div class="round-control"><span>Round</span><strong data-testid="run-round">${escapeHtml(session.round)}</strong></div><div class="turn-controls"><button type="button" class="button-secondary" data-back-to-detail>Encounter details</button><button type="button" data-run-action="previous_turn">Previous turn</button><button type="button" class="primary" data-run-action="next_turn">Next turn</button><button type="button" class="button-secondary" data-modal-open="run">View packet</button></div></header><div class="run-layout"><aside class="initiative-rail"><div class="rail-heading"><div><p class="eyebrow">Turn order</p><h2>Initiative</h2></div><span>${session.combatants.length}</span></div><div class="initiative-list">${initiative || (!partySetup ? "<p class=empty>No combatants.</p>" : "")}${partySetup}</div></aside><main class="run-stage">${sheet}</main><aside class="roll-log"><div class="rail-heading"><div><p class="eyebrow">Session record</p><h2>Dice and log</h2></div></div><form class="quick-roll" data-run-quick-roll><label>Quick roll<input name="expression" value="1d20" aria-label="Dice expression"></label><button type="submit">Roll</button></form><ul>${log || "<li class=empty>No rolls or changes yet.</li>"}</ul></aside></div></section>`;
 }
 
 function agentShelfMarkup(snapshot, draft) {
@@ -719,7 +733,14 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
   const exportBody = `<p class="modal-intro">Export a portable encounter, import an earlier version, or prepare the packet for the table.</p><div class="export-grid"><section><p class="card-kicker">Complete encounter</p><h3>Portable files</h3><p>JSON is readable and diffable. ZIP includes referenced attachments.</p><div class="controls"><button type="button" data-action="export-encounter">Export Encounter JSON</button><button type="button" data-action="export-encounter-zip">Export Encounter ZIP</button></div></section><section><p class="card-kicker">Restore</p><h3>Import encounter</h3><p>The native engine validates the encounter before it replaces the current draft.</p><div class="controls"><label class="file-control">Import Encounter JSON<input type="file" accept="application/json,.json" data-action="import-encounter"></label><label class="file-control">Import Encounter ZIP<input type="file" accept="application/zip,.zip,.sidekickdm.zip" data-action="import-encounter-zip"></label></div></section><section><p class="card-kicker">At the table</p><h3>Run-ready packet</h3><p>Open the print layout with participants, phases, guidance, and notices.</p><button type="button" data-action="print-encounter">Print Packet</button></section><section><p class="card-kicker">Reusable records</p><h3>Components and library</h3><p>Move creatures, hazards, profiles, and attachments without replacing the encounter.</p><button type="button" class="button-secondary" data-modal-open="transfer">Open transfer tools</button></section></div>`;
   const runPacketBody = runPacketMarkup(draft, snapshot);
   const libraryBody = libraryWorkspaceMarkup(draft, catalog);
+  const libraryDetailBody = libraryDetailWorkspaceMarkup(draft, catalog);
   const runWorkspaceBody = runWorkspaceMarkup(draft, catalog);
+  const librarySelection = selectedLibraryRecord(draft);
+  const workspaceTitle = uiState.mode === "library"
+    ? "Library"
+    : uiState.mode === "detail"
+      ? librarySelection?.title ?? librarySelection?.identity?.name ?? librarySelection?.name ?? "Encounter details"
+      : draft.title;
   const connectionDot = `<span class="connection-dot" data-connection-state="${escapeHtml(uiState.webMCPState)}" title="${escapeHtml(uiState.webMCPStatus)}"></span>`;
   const settingsBody = `<section class="settings-panel" data-testid="settings-panel">
     <div class="settings-summary"><div><p class="eyebrow">Browser storage</p><h3>Local data</h3><p>Sidekick keeps your encounters, custom creatures, run history, and attachments in this browser.</p></div><span class="settings-storage-mark" aria-hidden="true">Local</span></div>
@@ -731,9 +752,10 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
   </section>`;
   app.innerHTML = `
     <div class="shell mode-${escapeHtml(uiState.mode)} agent-${escapeHtml(uiState.agentShelf)}">
-      <header class="topbar"><div class="product-mark"><span class="product-sigil" aria-hidden="true"><img src="./public/brand/sidekick-logo-v3-transparent.png" alt=""></span><div><p class="eyebrow">Sidekick DM</p><strong>DM workspace</strong></div></div><nav class="mode-tabs" aria-label="Workspace mode"><button type="button" data-mode="library" aria-current="${uiState.mode === "library" ? "page" : "false"}">Library</button><button type="button" data-mode="build" aria-current="${uiState.mode === "build" ? "page" : "false"}">Build</button><button type="button" data-mode="run" aria-current="${uiState.mode === "run" ? "page" : "false"}" ${generation ? "disabled" : ""}>Run</button></nav><div class="title-block"><h1>${escapeHtml(draft.title)}</h1><div class="title-meta"><span class="badge" data-testid="readiness">${escapeHtml(snapshot.readiness?.status ?? "incomplete")}</span><span>Revision <strong data-testid="encounter-revision">${draft.revision}</strong></span><span>${escapeHtml(party.size)} heroes · level ${escapeHtml(party.effectiveLevel)}</span></div></div><nav class="controls command-controls" aria-label="Encounter actions"><div class="history-controls"><button type="button" class="button-quiet" data-action="undo" ${snapshot.canUndo ? "" : "disabled"}>Undo</button><button type="button" class="button-quiet" data-action="redo" ${snapshot.canRedo ? "" : "disabled"}>Redo</button></div><details class="action-menu"><summary>More</summary><div class="action-menu-popover"><button type="button" data-modal-open="run">View packet</button><button type="button" data-modal-open="packet">Edit packet</button><button type="button" data-modal-open="export">Export and print</button><button type="button" data-modal-open="npc" ${npcTarget ? "" : "disabled"}>NPC profiles</button><button type="button" data-modal-open="phase">Phases</button><button type="button" data-modal-open="transfer">Transfer library</button><button type="button" data-modal-open="settings">Settings</button><button type="button" data-action="new-encounter">New encounter</button></div></details><button type="button" class="sidekick-toggle" data-agent-toggle aria-expanded="${uiState.agentShelf !== "dismissed"}" aria-label="Sidekick. ${escapeHtml(uiState.webMCPStatus)}">Sidekick ${connectionDot}</button></nav></header>
+      <header class="topbar"><button type="button" class="product-mark" data-library-home aria-label="Open Library"><span class="product-sigil" aria-hidden="true"><img src="./public/brand/sidekick-logo-v3-transparent.png" alt=""></span><span><span class="eyebrow">Sidekick DM</span><strong>Library</strong></span></button><div class="title-block"><h1>${escapeHtml(workspaceTitle)}</h1><div class="title-meta"><span class="badge" data-testid="readiness">${escapeHtml(snapshot.readiness?.status ?? "incomplete")}</span><span>Revision <strong data-testid="encounter-revision">${draft.revision}</strong></span><span>${escapeHtml(party.size)} heroes · level ${escapeHtml(party.effectiveLevel)}</span></div></div><nav class="controls command-controls" aria-label="Encounter actions"><div class="history-controls"><button type="button" class="button-quiet" data-action="undo" ${snapshot.canUndo ? "" : "disabled"}>Undo</button><button type="button" class="button-quiet" data-action="redo" ${snapshot.canRedo ? "" : "disabled"}>Redo</button></div><details class="action-menu"><summary>More</summary><div class="action-menu-popover"><button type="button" data-modal-open="run">View packet</button><button type="button" data-modal-open="packet">Edit packet</button><button type="button" data-modal-open="export">Export and print</button><button type="button" data-modal-open="npc" ${npcTarget ? "" : "disabled"}>NPC profiles</button><button type="button" data-modal-open="phase">Phases</button><button type="button" data-modal-open="transfer">Transfer library</button><button type="button" data-modal-open="settings">Settings</button><button type="button" data-action="new-encounter">New encounter</button></div></details><button type="button" class="sidekick-toggle" data-agent-toggle aria-expanded="${uiState.agentShelf !== "dismissed"}" aria-label="Sidekick. ${escapeHtml(uiState.webMCPStatus)}">Sidekick ${connectionDot}</button></nav></header>
       ${generation ? `<div class="generation-banner warning" data-testid="generation-state"><strong>${generationState === "interrupted" ? "Generation paused" : "Sidekick is building this encounter"}</strong><p>Follow progress in the Sidekick shelf. You can browse and inspect content while conflicting edits are paused.</p></div>` : ""}
       ${libraryBody}
+      ${libraryDetailBody}
       ${runWorkspaceBody}
       <div class="workspace">
         <section class="encounter-stage" aria-labelledby="roster-title">${generationReviewMarkup(draft, snapshot, catalog)}<div class="section-heading"><div><p class="eyebrow">Encounter composition</p><h2 id="roster-title">Opposition</h2></div><details class="action-menu add-menu"><summary>Add creature</summary><div class="action-menu-popover"><button type="button" data-modal-open="catalog">Search catalog</button><button type="button" data-modal-open="creature" data-new-creature>Create custom creature</button></div></details></div><div class="creature-roster">${participants || `<section class="empty-state"><p class="eyebrow">The field is clear</p><h3>No creatures in this encounter</h3><p>Search the catalog or create a custom creature. Statistics appear here as soon as you add one.</p><div><button type="button" data-modal-open="catalog">Search catalog</button><button type="button" class="button-secondary" data-modal-open="creature" data-new-creature>Create creature</button></div></section>`}</div>
@@ -759,7 +781,7 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
       ${modalMarkup("library-inspection", libraryInspection.title, libraryInspection.body, "modal-wide modal-inspection")}
     </div>`;
   const titleNode = app.querySelector(".title-block h1");
-  if (titleNode) { titleNode.title = draft.title; titleNode.setAttribute("aria-label", draft.title); }
+  if (titleNode) { titleNode.title = workspaceTitle; titleNode.setAttribute("aria-label", workspaceTitle); }
 
   const activityList = app.querySelector(".agent-activity ul");
   if (activityList) {
@@ -836,11 +858,19 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
       render({ asset, engine, catalog, catalogState: activeCatalogState, notice: error instanceof Error ? error.message : String(error) });
     }
   };
-  app.querySelectorAll("[data-mode]").forEach(button => button.addEventListener("click", () => {
-    if (uiState.mode !== button.dataset.mode) globalThis.scrollTo?.(0, 0);
-    uiState.mode = button.dataset.mode;
+  app.querySelectorAll("[data-library-home], [data-library-back]").forEach(button => button.addEventListener("click", () => {
+    if (uiState.mode !== "library") globalThis.scrollTo?.(0, 0);
+    uiState.mode = "library";
     uiState.activeModal = null;
-    render({ asset, engine, catalog, catalogState: activeCatalogState, notice: `${button.textContent.trim()} workspace opened` });
+    render({ asset, engine, catalog, catalogState: activeCatalogState, notice: "Library opened" });
+  }));
+  app.querySelectorAll("[data-back-to-detail]").forEach(button => button.addEventListener("click", () => {
+    globalThis.scrollTo?.(0, 0);
+    uiState.libraryTab = "encounters";
+    uiState.librarySelection = draft.id;
+    uiState.mode = "detail";
+    uiState.activeModal = null;
+    render({ asset, engine, catalog, catalogState: activeCatalogState, notice: "Encounter details opened" });
   }));
   app.querySelectorAll("[data-agent-toggle]").forEach(button => button.addEventListener("click", () => { uiState.agentManualShelfOverride = true; uiState.agentShelf = uiState.agentShelf === "dismissed" ? "compact" : uiState.agentShelf === "compact" ? "expanded" : "compact"; render({ asset, engine, catalog, catalogState: activeCatalogState, notice }); }));
   app.querySelector("[data-agent-expand]")?.addEventListener("click", () => { uiState.agentManualShelfOverride = true; uiState.agentShelf = uiState.agentShelf === "expanded" ? "compact" : "expanded"; render({ asset, engine, catalog, catalogState: activeCatalogState, notice }); });
@@ -868,7 +898,7 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
     }
     await saveDraft(draft);
     uiState.restoredComponents = await encounterStore.readLibrary();
-    uiState.mode = "library";
+    uiState.mode = "detail";
     uiState.libraryTab = "encounters";
     uiState.librarySelection = draft.id;
     uiState.agentEvents.unshift({ description: "Saved to the encounter library", detail: "Available from the Library.", status: "completed" });
@@ -883,14 +913,35 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
     const empty = app.querySelector("[data-library-empty]");
     if (empty) empty.hidden = rows.some(row => !row.hidden);
   });
-  app.querySelectorAll("[data-library-select-record]").forEach(button => button.addEventListener("click", () => { uiState.librarySelection = button.dataset.librarySelectRecord; render({ asset, engine, catalog, catalogState: activeCatalogState, notice }); }));
+  app.querySelectorAll("[data-library-select-record]").forEach(button => button.addEventListener("click", () => { uiState.librarySelection = button.dataset.librarySelectRecord; uiState.mode = "detail"; globalThis.scrollTo?.(0, 0); render({ asset, engine, catalog, catalogState: activeCatalogState, notice: "Library item opened" }); }));
   app.querySelectorAll("[data-library-inspect-kind]").forEach(button => button.addEventListener("click", () => {
     uiState.libraryInspection = { kind: button.dataset.libraryInspectKind, encounterID: button.dataset.libraryInspectEncounter, componentID: button.dataset.libraryInspectComponent };
     uiState.activeModal = "library-inspection";
     render({ asset, engine, catalog, catalogState: activeCatalogState, notice: `${button.getAttribute("aria-label")} opened` });
   }));
-  app.querySelectorAll("[data-library-open]").forEach(button => button.addEventListener("click", () => { const encounter = (uiState.restoredComponents?.encounters ?? []).find(item => item.id === button.dataset.libraryOpen) ?? (draft.id === button.dataset.libraryOpen ? draft : null); if (encounter) void loadEncounter(encounter, "build"); }));
-  app.querySelectorAll("[data-library-run]").forEach(button => button.addEventListener("click", () => { const encounter = (uiState.restoredComponents?.encounters ?? []).find(item => item.id === button.dataset.libraryRun) ?? (draft.id === button.dataset.libraryRun ? draft : null); if (encounter) void loadEncounter(encounter, "run"); }));
+  app.querySelectorAll("[data-library-open]").forEach(button => button.addEventListener("click", () => {
+    if (draft.id === button.dataset.libraryOpen) {
+      globalThis.scrollTo?.(0, 0);
+      uiState.mode = "build";
+      uiState.activeModal = null;
+      render({ asset, engine, catalog, catalogState: activeCatalogState, notice: "Encounter opened for editing" });
+      return;
+    }
+    const encounter = (uiState.restoredComponents?.encounters ?? []).find(item => item.id === button.dataset.libraryOpen);
+    if (encounter) void loadEncounter(encounter, "build");
+  }));
+  app.querySelectorAll("[data-library-run]").forEach(button => button.addEventListener("click", async () => {
+    if (draft.id === button.dataset.libraryRun) {
+      globalThis.scrollTo?.(0, 0);
+      uiState.mode = "run";
+      uiState.activeModal = null;
+      uiState.runSession = await loadStoreRecord("run_sessions", `run_${draft.id}`);
+      render({ asset, engine, catalog, catalogState: activeCatalogState, notice: "Encounter ready at the table" });
+      return;
+    }
+    const encounter = (uiState.restoredComponents?.encounters ?? []).find(item => item.id === button.dataset.libraryRun);
+    if (encounter) void loadEncounter(encounter, "run");
+  }));
   app.querySelector("[data-library-new-creature]")?.addEventListener("click", () => { uiState.creature = createEmptyOriginalCreature(); uiState.replacingParticipantID = null; uiState.activeModal = "creature"; render({ asset, engine, catalog, catalogState: activeCatalogState, notice: "New creature ready" }); });
   app.querySelector("[data-library-new-encounter]")?.addEventListener("click", () => { if (uiState.mode !== "build") globalThis.scrollTo?.(0, 0); uiState.mode = "build"; mutate({ command: "sidekickdm_create_encounter", title: "Untitled Encounter", effective_level: Number(party.effectiveLevel), size: Number(party.size), kind: target.kind, custom_xp: target.kind === "custom" ? Number(target.customXP ?? 0) : null }, "New encounter ready" ); });
   app.querySelectorAll("[data-library-edit-creature]").forEach(button => button.addEventListener("click", () => { const creature = (uiState.restoredComponents?.creatures ?? []).find(item => item.id === button.dataset.libraryEditCreature) ?? (draft.originalCreatures ?? []).find(item => item.id === button.dataset.libraryEditCreature); if (!creature) return; uiState.creature = structuredClone(creature); uiState.replacingParticipantID = null; uiState.activeModal = "creature"; render({ asset, engine, catalog, catalogState: activeCatalogState, notice: "Custom creature opened" }); }));
@@ -1039,15 +1090,16 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
   app.querySelector('[data-action="increment"]').addEventListener("click", () => { const result = issue(engine, { command: "sidekick_increment", expected_revision: draft.revision, origin: "gm" }); if (!result.ok) return render({ asset, engine: { ...engine, snapshot: result.snapshot }, catalog, catalogState, notice: result.error?.message }); engine.snapshot = result.snapshot; render({ asset, engine, catalog, catalogState, bridgeMessage: globalThis.sidekickBridge.notifySwiftValue(result.snapshot.draft.swiftOwnedValue), notice: "Swift-owned state changed" }); });
   app.querySelectorAll("[data-phase-edit]").forEach(button => button.addEventListener("click", () => { uiState.phaseID = button.dataset.phaseEdit; uiState.phase = null; uiState.activeModal = "phase"; render({ asset, engine, catalog, catalogState, notice: "Phase opened for editing" }); }));
   app.querySelector('[data-action="new-phase"]').addEventListener("click", () => { uiState.phaseID = null; uiState.phase = createEmptyPhase({ order: authoredPhases.length }); uiState.activeModal = "phase"; render({ asset, engine, catalog, catalogState, notice: "New phase ready" }); });
+  const editingLibraryCreature = (uiState.mode === "library" || uiState.mode === "detail") && uiState.libraryTab === "creatures";
   createCreatureBuilder({
     root: app.querySelector("#creature-builder-root"),
     creature: uiState.creature ?? createEmptyOriginalCreature(),
     partyLevel: party.effectiveLevel,
-    submitLabel: uiState.replacingParticipantID ? "Replace creature" : uiState.mode === "library" ? ((uiState.restoredComponents?.creatures ?? []).some(item => item.id === uiState.creature?.id) ? "Save changes" : "Save to library") : (draft.originalCreatures ?? []).some(item => item.id === uiState.creature?.id) ? "Save changes" : "Add to encounter",
+    submitLabel: uiState.replacingParticipantID ? "Replace creature" : editingLibraryCreature ? ((uiState.restoredComponents?.creatures ?? []).some(item => item.id === uiState.creature?.id) ? "Save changes" : "Save to library") : (draft.originalCreatures ?? []).some(item => item.id === uiState.creature?.id) ? "Save changes" : "Add to encounter",
     onMutation: ({ creature }) => { uiState.creature = creature; },
     onAutosave: (envelope) => { uiState.creature = envelope.creature; void saveRecord("original-creature", envelope); },
     onAddToEncounter: ({ creature }) => {
-      if (uiState.mode === "library" && !uiState.replacingParticipantID) {
+      if (editingLibraryCreature && !uiState.replacingParticipantID) {
         void encounterStore.saveLibraryRecord("creature", creature).then(() => {
           const records = uiState.restoredComponents?.creatures ?? [];
           uiState.restoredComponents = { ...(uiState.restoredComponents ?? {}), creatures: [...new Map([...records, creature].map(item => [item.id, item])).values()] };
@@ -1132,7 +1184,7 @@ function render({ asset, engine, catalog, catalogState = { query: "", results: n
   });
   if (manualLocked) {
     app.querySelectorAll("input, select, textarea, button").forEach(control => {
-      if (!control.matches('[data-mode="library"], [data-mode="build"], [data-agent-toggle], [data-agent-expand], [data-agent-dismiss], [data-generation-stop], [data-action^="export-"], [data-action="print-encounter"], [data-modal-open], [data-modal-close], [data-catalog-inspect], [data-catalog-close]')) control.disabled = true;
+      if (!control.matches('[data-library-home], [data-library-back], [data-back-to-detail], [data-agent-toggle], [data-agent-expand], [data-agent-dismiss], [data-generation-stop], [data-action^="export-"], [data-action="print-encounter"], [data-modal-open], [data-modal-close], [data-catalog-inspect], [data-catalog-close]')) control.disabled = true;
     });
   }
   const activeDialog = uiState.activeModal ? app.querySelector(`[data-modal="${uiState.activeModal}"]`) : null;
@@ -1214,7 +1266,7 @@ try {
     saveEncounter: async draft => {
       await saveDraft(draft);
       uiState.restoredComponents = await encounterStore.readLibrary();
-      uiState.mode = "library";
+      uiState.mode = "detail";
       uiState.libraryTab = "encounters";
       uiState.librarySelection = draft.id;
       if (!uiState.agentManualShelfOverride) uiState.agentShelf = "compact";

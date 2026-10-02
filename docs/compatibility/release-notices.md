@@ -17,7 +17,7 @@ This is an implementation checklist, not legal advice. Confirm final wording and
 3. Attribute the included licensed material by its publication title: Pathfinder Monster Core, Pathfinder NPC Core, and Pathfinder GM Core. The generated manifest records the copyright year, publisher, license, designers, authors, and attribution notice. NPC Core uses the complete author list recorded by the extraction source's attribution reference.
 4. Identify the Foundry PF2e system as the technical extraction source and link/name the exact source revision. The Foundry Apache-2.0 notice applies only to Apache-licensed code actually reused; it does not relicense Paizo game content.
 5. Do not redistribute portraits, art, tokens, maps, attachments, Foundry configuration, macros, or rule-element automation unless each asset and transformation has an independent clearance. P0 is scoped to rules/data extraction and a future normalization pass only.
-6. If character data from OmenArchive/OmenTome is ever added, include its MIT/ORC notices separately. Those projects are not the source of the P0 creature/hazard records.
+6. If character data from OmenArchive is ever added, include its MIT/ORC notices separately. That archive is not the source of the P0 creature/hazard records.
 
 ## Release gate
 

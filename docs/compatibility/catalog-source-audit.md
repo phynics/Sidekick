@@ -6,7 +6,7 @@ Status: generated and verified, captured 2026-08-28. This document records what 
 
 The audit uses the local `pf2e` checkout at revision `4cbdaa37d6c33e9519561bae2c59a23e0288cbce` (PF2e system 6.12.4). P0 is limited to the current remaster packs `pathfinder-monster-core`, `pathfinder-npc-core`, and the current GM Core records in `packs/hazards`. The inventory is 492, 270, and 32 records respectively. All are marked ORC/remaster in their local publication metadata.
 
-OmenArchive and OmenTome were inspected for reusable conventions. They contain character resources and spell/feat import manifests, not creature or hazard records. Their useful conventions are source publication/page, upstream identifier, source hash, generator revision, counts, status, and diagnostics. They are not canonical PF2 creature/hazard inputs.
+OmenArchive was inspected for reusable conventions. It contains character resources and spell/feat import manifests, not creature or hazard records. Its useful conventions are source publication/page, upstream identifier, source hash, generator revision, counts, status, and diagnostics. They are not canonical PF2 creature/hazard inputs.
 
 The rules fixture links the published GM Core encounter tables and Building Hazards tables 2-13 through 2-16. The hazard fixture stores Stealth/Disable DCs, Defenses, and Offense values for levels -1 through 13; the explicit Hazard XP table remains authoritative at +4 (150 XP for a complex hazard).
 
@@ -35,7 +35,7 @@ The local records prove spellcasting coverage through `items` entries with `type
 
 P0 is the three-pack current set in [p0-catalog-selection.v1.json](./p0-catalog-selection.v1.json). The audit verifies party levels 1–10 and component levels -1–13, with both simple and complex hazards and the target trap/environmental/haunt trait families. It does not claim Creature Roadmap, Encounter Role, or environment coverage: the design vocabularies remain blocked until reviewed assignments and evidence exist. `soldier` is retained under Creature Roadmap vocabulary, not Encounter Role. Representative source hashes and paths are recorded in that fixture.
 
-Known gaps are intentional: local JSON does not carry reliable page numbers, role/environment facets, or a universal stable slug; hazard records mix current and legacy publications; Foundry action/rule automation is not portable; and OmenArchive/OmenTome do not fill the creature/hazard gap. These are release-blocking diagnostics for any record that needs them, not reasons to fabricate metadata.
+Known gaps are intentional: local JSON does not carry reliable page numbers, role/environment facets, or a universal stable slug; hazard records mix current and legacy publications; Foundry action/rule automation is not portable; and OmenArchive does not fill the creature/hazard gap. These are release-blocking diagnostics for any record that needs them, not reasons to fabricate metadata.
 
 ## Reproducibility
 
